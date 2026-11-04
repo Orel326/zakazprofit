@@ -29,5 +29,6 @@ $('add').onclick=()=>addRow();$('save').onclick=()=>saveOrder(false);$('saveNew'
 $('reset').onclick=()=>{if(confirm('Начать новый расчёт? Текущие изменения не будут сохранены.')){currentOrderId=null;$('items').innerHTML='';$('title').value='Новый заказ';$('overhead').value=10;$('discount').value=0;$('margin').value=30;$('customPrice').value='';addRow('Материалы',1,0);renderOrders()}};
 $('customPrice').addEventListener('input',calc);['title','overhead','discount','margin'].forEach(id=>{const i=$(id);i.addEventListener('input',calc);if(i.type==='number'){i.addEventListener('focus',()=>{if(i.value==='0')i.value=''});i.addEventListener('blur',()=>{if(i.value==='')i.value='0';calc()}}});
 readOrders();
+if(currentOrderId)loadOrder(currentOrderId);
 if(!$('items').children.length)addRow('Материалы',1,0);
 </script></body></html>
