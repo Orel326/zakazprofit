@@ -1,6 +1,7 @@
 """Public OHLCV access through ccxt; no authentication or trading methods."""
 
 from datetime import datetime, timezone
+
 import ccxt
 
 
@@ -22,13 +23,43 @@ def create_exchange(exchange_id: str = "binance"):
     return exchange_class({"enableRateLimit": True, "options": {"defaultType": "spot"}})
 
 
-def fetch_closed_ohlcv(exchange, symbol: str, timeframe: str, since_ms: int, now_ms: int | None = None):
+def fetch_closed_ohlcv(
+    exchange, symbol: str, timeframe: str, since_ms: int, now_ms: int | None = None
+):
     if symbol not in ALLOWED_SYMBOLS:
         raise ValueError(f"Unsupported symbol: {symbol}")
     if timeframe not in TIMEFRAME_MS:
         raise ValueError(f"Unsupported timeframe: {timeframe}")
-    rows = exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since_ms, limit=1000)
-    current_ms = now_ms if now_ms is not None else int(datetime.now(timezone.utc).timestamp() * 1000)
+    if since_ms < 0:
+        raise ValueError("since_ms must be non-negative")
+
+    current_ms = (
+        now_ms
+        if now_ms is not None
+        else int(datetime.now(timezone.utc).timestamp() * 1000)
+    )
     candle_ms = TIMEFRAME_MS[timeframe]
-    # Exclude the still-forming candle; its OHLCV values can change until close.
-    return [row for row in rows if int(row[0]) + candle_ms <= current_ms]
+    cursor = since_ms
+    by_timestamp = {}
+
+    # Paginate so small timeframes can retrieve more than the exchange's
+    # per-request limit of 1,000 candles.
+    while cursor < current_ms:
+        batch = exchange.fetch_ohlcv(
+            symbol, timeframe=timeframe, since=cursor, limit=1000
+        )
+        if not batch:
+            break
+        for row in batch:
+            timestamp = int(row[0])
+            if timestamp + candle_ms <= current_ms:
+                by_timestamp[timestamp] = row
+        last_timestamp = int(batch[-1][0])
+        if last_timestamp < cursor or len(batch) < 1000:
+            break
+        next_cursor = last_timestamp + candle_ms
+        if next_cursor <= cursor:
+            break
+        cursor = next_cursor
+
+    return [by_timestamp[key] for key in sorted(by_timestamp)]
