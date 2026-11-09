@@ -20,7 +20,8 @@ def test_team_emits_structured_reports_and_news_abstains():
     result = analyze_symbol("BTC/USDT", make_rows("up"))
     names = {report["agent"] for report in result.reports}
     assert {"market_scanner", "technical_analyst", "market_regime",
-            "news_analyst", "counterargument", "risk_manager"} <= names
+            "news_analyst", "counterargument", "risk_manager",
+            "chief_trader"} <= names
     news = next(r for r in result.reports if r["agent"] == "news_analyst")
     assert news["status"] == "unavailable"
 
