@@ -11,7 +11,9 @@ from .storage import save_candles
 
 def main() -> int:
     settings = Settings.from_env()
-    parser = argparse.ArgumentParser(description="Download public Binance Spot OHLCV candles")
+    parser = argparse.ArgumentParser(
+        description=f"Download public {settings.exchange_id.upper()} Spot OHLCV candles"
+    )
     parser.add_argument("--symbols", nargs="+", default=list(settings.symbols))
     parser.add_argument("--timeframe", choices=TIMEFRAME_MS, default=settings.default_timeframe)
     parser.add_argument("--days", type=int, default=settings.default_days)
@@ -26,7 +28,7 @@ def main() -> int:
     try:
         exchange.load_markets()
         for symbol in args.symbols:
-            print(f"[{symbol}] downloading {args.timeframe} candles...")
+            print(f"[{symbol}] downloading {args.timeframe} candles from {settings.exchange_id}...")
             rows = fetch_closed_ohlcv(exchange, symbol, args.timeframe, since_ms, now_ms)
             report = validate_ohlcv(rows, TIMEFRAME_MS[args.timeframe])
             for warning in report.warnings:
