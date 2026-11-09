@@ -38,23 +38,18 @@ class TeamDecision:
 
 def _reports(snapshot: MarketSnapshot) -> tuple[list[AgentReport], TradeProposal | None]:
     reports: list[AgentReport] = []
-    # Agent 1: market scanner
     reports.append(AgentReport(
         "market_scanner", "complete",
         f"Scanned {snapshot.symbol} using {snapshot.candles} closed candles.",
         (f"Last close: {snapshot.close:.4f}", f"Trend: {snapshot.trend}"),
     ))
-    # Agent 2: technical analyst
     bullish = snapshot.trend == "bullish" and snapshot.momentum == "positive"
-    bearish = snapshot.trend == "bearish" and snapshot.momentum == "negative"
-    technical_status = "long_candidate" if bullish else "no_setup"
     reports.append(AgentReport(
-        "technical_analyst", technical_status,
+        "technical_analyst", "long_candidate" if bullish else "no_setup",
         "Trend and momentum align." if bullish else "No sufficiently aligned long setup.",
         (f"EMA20: {snapshot.ema_fast:.4f}", f"EMA50: {snapshot.ema_slow:.4f}",
          f"RSI14: {snapshot.rsi:.2f}", f"ATR: {snapshot.atr_pct:.2f}%"),
     ))
-    # Agent 3: regime analyst
     regime_ok = snapshot.trend != "sideways" and snapshot.volatility != "high"
     reports.append(AgentReport(
         "market_regime", "favorable" if regime_ok else "unfavorable",
@@ -62,7 +57,6 @@ def _reports(snapshot: MarketSnapshot) -> tuple[list[AgentReport], TradeProposal
         "Regime is sideways or volatility is too high.",
         (f"Trend: {snapshot.trend}", f"Volatility: {snapshot.volatility} ({snapshot.atr_pct:.2f}% ATR)"),
     ))
-    # Agent 4: news analyst. No feed is connected at this stage; abstain explicitly.
     reports.append(AgentReport(
         "news_analyst", "unavailable",
         "No verified news source is connected; no news-based conclusion is made.",
@@ -100,7 +94,7 @@ def _reports(snapshot: MarketSnapshot) -> tuple[list[AgentReport], TradeProposal
 def analyze_symbol(symbol: str, rows: Sequence[Sequence[float]]) -> TeamDecision:
     snapshot = analyze_candles(symbol, rows)
     reports, proposal = _reports(snapshot)
-    # Hard risk gate. This is a deterministic veto and is not delegated to the chief trader.
+    # Hard risk gate: the chief trader cannot override this decision.
     risk_reasons: list[str] = []
     if proposal is None:
         risk_reasons.append("No valid proposal to assess.")
@@ -112,9 +106,12 @@ def analyze_symbol(symbol: str, rows: Sequence[Sequence[float]]) -> TeamDecision
     reports.append(AgentReport(
         "risk_manager", "approved" if risk_approved else "veto",
         "Hard risk checks passed." if risk_approved else "Trade blocked by hard risk gate.",
-        tuple(risk_reasons or ["Proposal geometry valid; account-level limits are checked by PaperBroker at execution."]),
+        tuple(risk_reasons or [
+            "Proposal geometry valid; account-level limits are checked by PaperBroker at execution."
+        ]),
     ))
-    # Chief trader is the only final decision-maker, but cannot override risk veto.
+
+    # Chief trader is the sole final decision-maker, subject to the hard veto.
     if not proposal:
         decision, reason = "NO_TRADE", "No qualifying technical proposal."
     elif not risk_approved:
@@ -123,6 +120,11 @@ def analyze_symbol(symbol: str, rows: Sequence[Sequence[float]]) -> TeamDecision
         decision, reason = "NO_TRADE", "Counterargument agent did not provide three objections."
     else:
         decision, reason = "WATCH", "Proposal passed initial gates; awaiting account-level sizing and execution stage."
+
+    reports.append(AgentReport(
+        "chief_trader", decision, reason,
+        (f"Risk manager approval: {risk_approved}", f"Proposal present: {proposal is not None}"),
+    ))
     return TeamDecision(
         decision, reason, asdict(snapshot),
         tuple(asdict(report) for report in reports),
