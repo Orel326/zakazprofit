@@ -5,7 +5,8 @@
 ## Что реализовано
 
 ### Рыночные данные
-- Получение закрытых OHLCV-свечей Binance Spot через публичный API (ccxt).
+- Получение закрытых OHLCV-свечей через публичный API OKX Spot по умолчанию (ccxt).
+- Binance Spot также поддерживается, если API доступен в регионе.
 - Поддерживаемые инструменты: BTC/USDT и ETH/USDT.
 - Проверка чисел, OHLC-границ, порядка времени, дубликатов и пропусков.
 - Идемпотентное сохранение в SQLite.
@@ -48,6 +49,8 @@ Copy-Item .env.example .env
 
 ## Сбор данных
 
+По умолчанию используется OKX. Биржу можно изменить в `.env` через `EXCHANGE_ID`.
+
 ```powershell
 python -m crypto_trader.cli --days 30 --timeframe 1h
 ```
@@ -71,7 +74,7 @@ pytest
 ## Структура
 
 - src/crypto_trader/config.py — настройки.
-- src/crypto_trader/exchange.py — публичный клиент Binance и загрузка свечей.
+- src/crypto_trader/exchange.py — публичные клиенты OKX/Binance и загрузка свечей.
 - src/crypto_trader/quality.py — проверки качества данных.
 - src/crypto_trader/storage.py — хранение рыночных свечей.
 - src/crypto_trader/analysis.py — EMA, RSI, ATR и классификация рынка.
