@@ -14,11 +14,16 @@ TIMEFRAME_MS = {
     "1d": 86_400_000,
 }
 ALLOWED_SYMBOLS = {"BTC/USDT", "ETH/USDT"}
+SUPPORTED_EXCHANGES = {"okx", "binance"}
 
 
-def create_exchange(exchange_id: str = "binance"):
-    if exchange_id != "binance":
-        raise ValueError("Stage 1 supports Binance Spot public market data only")
+def create_exchange(exchange_id: str = "okx"):
+    exchange_id = exchange_id.strip().lower()
+    if exchange_id not in SUPPORTED_EXCHANGES:
+        raise ValueError(
+            f"Unsupported exchange: {exchange_id}. "
+            f"Supported exchanges: {', '.join(sorted(SUPPORTED_EXCHANGES))}"
+        )
     exchange_class = getattr(ccxt, exchange_id)
     return exchange_class({"enableRateLimit": True, "options": {"defaultType": "spot"}})
 
