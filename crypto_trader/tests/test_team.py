@@ -1,16 +1,16 @@
 from crypto_trader.team import analyze_symbol
 
 
-def make_rows(kind="up", count=100):
+def make_rows(kind="up", count=120):
     rows = []
     price = 100.0
     for i in range(count):
         if kind == "up":
-            price *= 1.004
+            price *= 1.002 if i % 4 != 3 else 0.997
         elif kind == "down":
-            price *= 0.996
+            price *= 0.998 if i % 4 != 3 else 1.003
         else:
-            price *= 1.0 + (0.001 if i % 2 else -0.001)
+            price *= 1.001 if i % 2 else 0.999
         rows.append([i * 3_600_000, price * 0.999, price * 1.002,
                      price * 0.998, price, 1000.0])
     return rows
@@ -25,7 +25,7 @@ def test_team_emits_structured_reports_and_news_abstains():
     assert news["status"] == "unavailable"
 
 
-def test_chief_does_not_trade_without_technical_setup():
+def test_team_does_not_trade_without_technical_setup():
     result = analyze_symbol("BTC/USDT", make_rows("down"))
     assert result.decision == "NO_TRADE"
     assert result.proposal is None
@@ -34,7 +34,7 @@ def test_chief_does_not_trade_without_technical_setup():
 def test_counterargument_produces_three_objections_for_candidate():
     result = analyze_symbol("BTC/USDT", make_rows("up"))
     counter = next(r for r in result.reports if r["agent"] == "counterargument")
-    if result.proposal:
+    if result.proposal is not None:
         assert len(counter["objections"]) >= 3
 
 
