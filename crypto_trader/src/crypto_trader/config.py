@@ -11,7 +11,7 @@ load_dotenv()
 
 @dataclass(frozen=True)
 class Settings:
-    exchange_id: str = "binance"
+    exchange_id: str = "okx"
     database_path: Path = Path("data/market_data.sqlite3")
     default_timeframe: str = "1h"
     default_days: int = 30
@@ -27,7 +27,7 @@ class Settings:
         if days < 1:
             raise ValueError("DEFAULT_DAYS must be >= 1")
         return cls(
-            exchange_id=os.getenv("EXCHANGE_ID", "binance").strip().lower(),
+            exchange_id=os.getenv("EXCHANGE_ID", "okx").strip().lower(),
             database_path=Path(os.getenv("DATABASE_PATH", "data/market_data.sqlite3")),
             default_timeframe=os.getenv("DEFAULT_TIMEFRAME", "1h").strip(),
             default_days=days,
