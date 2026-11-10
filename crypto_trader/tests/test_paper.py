@@ -6,7 +6,7 @@ from crypto_trader.paper import PaperBroker, PaperConfig
 
 
 def broker(tmp_path: Path, **overrides) -> PaperBroker:
-    values = {"initial_balance": 10_000.0, "fee_rate": 0.001,
+    values = {"initial_balance": 100.0, "fee_rate": 0.001,
               "slippage_rate": 0.0005, "risk_per_trade": 0.005,
               "max_total_open_risk": 0.02, "max_open_positions": 2,
               "daily_loss_limit": 0.02}
@@ -18,7 +18,7 @@ def test_account_is_persistent_and_initializes_only_once(tmp_path):
     first = broker(tmp_path)
     first.open_position("BTC/USDT", 100, 95, 110, "2026-11-01T10:00:00+00:00")
     second = broker(tmp_path, initial_balance=99_000)
-    assert second.account()["initial_balance"] == 10_000
+    assert second.account()["initial_balance"] == 100
     assert len(second.open_positions()) == 1
 
 
