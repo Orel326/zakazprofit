@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS paper_equity (
 
 @dataclass(frozen=True)
 class PaperConfig:
-    initial_balance: float = 10_000.0
+    initial_balance: float = 100.0
     fee_rate: float = 0.001
     slippage_rate: float = 0.0005
     risk_per_trade: float = 0.005
