@@ -46,23 +46,30 @@ def _load_recent(database_path, exchange, symbol, timeframe, limit, end_ms=None)
     return list(reversed(rows))
 
 
-def _last_processed(database_path, symbol):
+def _state_key(exchange, timeframe, symbol):
+    return f"{exchange}|{timeframe}|{symbol}"
+
+
+def _last_processed(database_path, symbol, exchange="okx", timeframe="1h"):
+    key = _state_key(exchange, timeframe, symbol)
     with sqlite3.connect(database_path) as db:
         db.execute(STATE_SCHEMA)
         row = db.execute(
-            "SELECT last_candle_ms FROM paper_cycle_state WHERE symbol=?", (symbol,)
+            "SELECT last_candle_ms FROM paper_cycle_state WHERE symbol=?", (key,)
         ).fetchone()
     return int(row[0]) if row else None
 
 
-def _save_processed(database_path, symbol, timestamp_ms):
+def _save_processed(database_path, symbol, timestamp_ms,
+                    exchange="okx", timeframe="1h"):
+    key = _state_key(exchange, timeframe, symbol)
     with sqlite3.connect(database_path) as db:
         db.execute(STATE_SCHEMA)
         db.execute(
             """INSERT INTO paper_cycle_state(symbol,last_candle_ms,updated_at)
                VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET
                last_candle_ms=excluded.last_candle_ms, updated_at=excluded.updated_at""",
-            (symbol, int(timestamp_ms), _utc_now()),
+            (key, int(timestamp_ms), _utc_now()),
         )
 
 
@@ -93,7 +100,7 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
     for symbol in settings.symbols:
         existing = next((p for p in broker.open_positions()
                          if p["symbol"] == symbol), None)
-        last_processed = _last_processed(settings.database_path, symbol)
+        last_processed = _last_processed(settings.database_path, symbol, settings.exchange_id, timeframe)
         since_ms = default_since_ms
         if last_processed is not None:
             # Do not silently skip candles after a long outage; catch up from
@@ -147,7 +154,7 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
 
         if not pending:
             if last_processed is None:
-                _save_processed(settings.database_path, symbol, latest_ms)
+                _save_processed(settings.database_path, symbol, latest_ms, settings.exchange_id, timeframe)
                 results.append({"symbol": symbol, "status": "state_initialized",
                                 "last_candle_ms": latest_ms})
             else:
@@ -202,7 +209,7 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
                         "execution_rejected": rejection, "reports": decision.reports,
                     })
             # Advance state only after this candle has been fully handled.
-            _save_processed(settings.database_path, symbol, ts)
+            _save_processed(settings.database_path, symbol, ts, settings.exchange_id, timeframe)
 
         results.append({
             "symbol": symbol,
