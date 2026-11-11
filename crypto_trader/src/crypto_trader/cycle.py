@@ -1,6 +1,6 @@
-"""One-candle-at-a-time autonomous paper trading cycle.
+"""Sequential, restart-safe autonomous paper trading cycle.
 
-This module uses public OHLCV data only. It never places real exchange orders.
+Uses public OHLCV only and never places real exchange orders.
 """
 from __future__ import annotations
 
@@ -31,15 +31,18 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _load_recent(database_path, exchange, symbol, timeframe, limit):
-    with sqlite3.connect(database_path) as db:
-        rows = db.execute(
-            """SELECT timestamp_ms, open, high, low, close, volume
+def _load_recent(database_path, exchange, symbol, timeframe, limit, end_ms=None):
+    query = """SELECT timestamp_ms, open, high, low, close, volume
                FROM candles
-               WHERE exchange=? AND symbol=? AND timeframe=?
-               ORDER BY timestamp_ms DESC LIMIT ?""",
-            (exchange, symbol, timeframe, limit),
-        ).fetchall()
+               WHERE exchange=? AND symbol=? AND timeframe=?"""
+    params = [exchange, symbol, timeframe]
+    if end_ms is not None:
+        query += " AND timestamp_ms<=?"
+        params.append(int(end_ms))
+    query += " ORDER BY timestamp_ms DESC LIMIT ?"
+    params.append(int(limit))
+    with sqlite3.connect(database_path) as db:
+        rows = db.execute(query, params).fetchall()
     return list(reversed(rows))
 
 
@@ -63,22 +66,39 @@ def _save_processed(database_path, symbol, timestamp_ms):
         )
 
 
+def _to_ms(timestamp: str) -> int:
+    return int(datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp() * 1000)
+
+
 def run_cycle(exchange, settings: Settings, broker: PaperBroker,
               timeframe: str = "1h", candles: int = 200,
               now_ms: int | None = None) -> dict[str, Any]:
-    """Fetch, validate and process each newly closed candle at most once."""
+    """Fetch, validate and process every newly closed candle in chronological order.
+
+    On first startup with no open position, older candles are used only as
+    indicator history; only the latest closed candle is eligible for a trade.
+    """
     if timeframe not in TIMEFRAME_MS:
         raise ValueError(f"Unsupported timeframe: {timeframe}")
     if candles < 60:
         raise ValueError("candles must be >= 60")
-    current_ms = now_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
+    current_ms = (now_ms if now_ms is not None
+                  else int(datetime.now(timezone.utc).timestamp() * 1000))
     candle_ms = TIMEFRAME_MS[timeframe]
-    since_ms = max(0, current_ms - (candles + 10) * candle_ms)
+    default_since_ms = max(0, current_ms - (candles + 10) * candle_ms)
     results = []
     marks: dict[str, float] = {}
 
     exchange.load_markets()
     for symbol in settings.symbols:
+        existing = next((p for p in broker.open_positions()
+                         if p["symbol"] == symbol), None)
+        last_processed = _last_processed(settings.database_path, symbol)
+        since_ms = default_since_ms
+        if existing is not None and last_processed is None:
+            # Recover the full position lifetime if the cycle-state row is absent.
+            since_ms = min(since_ms, max(0, _to_ms(existing["opened_at"]) - candle_ms))
+
         rows = fetch_closed_ohlcv(exchange, symbol, timeframe, since_ms, current_ms)
         if not rows:
             results.append({"symbol": symbol, "status": "no_closed_candles"})
@@ -92,58 +112,86 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
         save_candles(settings.database_path, settings.exchange_id, symbol,
                      timeframe, rows, current_ms)
         latest = rows[-1]
-        timestamp_ms = int(latest[0])
         marks[symbol] = float(latest[4])
-        last_processed = _last_processed(settings.database_path, symbol)
-        if last_processed is not None and timestamp_ms <= last_processed:
-            results.append({"symbol": symbol, "status": "no_new_candle",
-                            "last_candle_ms": timestamp_ms})
+        latest_ms = int(latest[0])
+
+        if last_processed is None:
+            if existing is None:
+                # Never backtest historical candles as if they were live signals.
+                pending = rows[-1:]
+            else:
+                opened_ms = _to_ms(existing["opened_at"])
+                pending = [row for row in rows if int(row[0]) > opened_ms]
+        else:
+            pending = [row for row in rows if int(row[0]) > last_processed]
+
+        if not pending:
+            if last_processed is None:
+                _save_processed(settings.database_path, symbol, latest_ms)
+                results.append({"symbol": symbol, "status": "state_initialized",
+                                "last_candle_ms": latest_ms})
+            else:
+                results.append({"symbol": symbol, "status": "no_new_candle",
+                                "last_candle_ms": latest_ms})
             continue
 
-        existing = next((p for p in broker.open_positions()
-                         if p["symbol"] == symbol), None)
-        event = None
-        if existing:
-            opened_ms = int(datetime.fromisoformat(existing["opened_at"].replace("Z", "+00:00")).timestamp() * 1000)
-            if timestamp_ms > opened_ms:
+        candle_events = []
+        for candle in pending:
+            ts = int(candle[0])
+            timestamp = datetime.fromtimestamp(ts / 1000, timezone.utc).isoformat()
+            position = next((p for p in broker.open_positions()
+                             if p["symbol"] == symbol), None)
+            if position is not None:
                 event = broker.process_candle(
-                    symbol, datetime.fromtimestamp(timestamp_ms / 1000, timezone.utc).isoformat(),
-                    float(latest[2]), float(latest[3])
+                    symbol, timestamp, float(candle[2]), float(candle[3]),
+                    open_price=float(candle[1]),
                 )
-            results.append({"symbol": symbol, "status": "position_managed",
-                            "exit": event, "position_open": any(
-                                p["symbol"] == symbol for p in broker.open_positions())})
-        else:
-            recent = _load_recent(settings.database_path, settings.exchange_id,
-                                  symbol, timeframe, candles)
-            if len(recent) < 60:
-                results.append({"symbol": symbol, "status": "insufficient_history",
-                                "candles": len(recent)})
-            else:
-                decision = analyze_symbol(symbol, recent)
-                opened = None
-                rejection = None
-                if decision.decision == "WATCH" and decision.proposal:
-                    proposal = decision.proposal
-                    try:
-                        opened = broker.open_position(
-                            symbol, float(proposal["reference_price"]),
-                            float(proposal["stop_loss"]), float(proposal["take_profit"]),
-                            datetime.fromtimestamp(timestamp_ms / 1000, timezone.utc).isoformat()
-                        )
-                    except ValueError as exc:
-                        rejection = str(exc)
-                results.append({
-                    "symbol": symbol, "status": "analyzed",
-                    "decision": decision.decision, "reason": decision.reason,
-                    "proposal": decision.proposal, "opened": opened,
-                    "execution_rejected": rejection,
-                    "reports": decision.reports,
+                candle_events.append({
+                    "timestamp_ms": ts, "action": "manage_position", "exit": event,
+                    "position_open": any(p["symbol"] == symbol
+                                         for p in broker.open_positions()),
                 })
-        _save_processed(settings.database_path, symbol, timestamp_ms)
+            else:
+                recent = _load_recent(
+                    settings.database_path, settings.exchange_id, symbol,
+                    timeframe, candles, end_ms=ts,
+                )
+                if len(recent) < 60:
+                    candle_events.append({
+                        "timestamp_ms": ts, "action": "insufficient_history",
+                        "candles": len(recent),
+                    })
+                else:
+                    decision = analyze_symbol(symbol, recent)
+                    opened = None
+                    rejection = None
+                    if decision.decision == "WATCH" and decision.proposal:
+                        proposal = decision.proposal
+                        try:
+                            opened = broker.open_position(
+                                symbol, float(proposal["reference_price"]),
+                                float(proposal["stop_loss"]), float(proposal["take_profit"]),
+                                timestamp,
+                            )
+                        except ValueError as exc:
+                            rejection = str(exc)
+                    candle_events.append({
+                        "timestamp_ms": ts, "action": "analyze",
+                        "decision": decision.decision, "reason": decision.reason,
+                        "proposal": decision.proposal, "opened": opened,
+                        "execution_rejected": rejection, "reports": decision.reports,
+                    })
+            # Advance state only after this candle has been fully handled.
+            _save_processed(settings.database_path, symbol, ts)
 
-    # A transient feed failure must not crash the cycle when a position is open.
-    # Use the last stored close as a stale mark; never invent a price.
+        results.append({
+            "symbol": symbol,
+            "status": "processed" if pending else "no_new_candle",
+            "candles_processed": len(pending),
+            "events": candle_events,
+        })
+
+    # Use the last stored close for any open position with a temporarily missing feed.
     equity_marks = dict(marks)
     stale_marks = []
     for position in broker.open_positions():
