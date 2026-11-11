@@ -232,9 +232,15 @@ class PaperBroker:
             ).fetchone()
         if position is None:
             return None
+        self._validate_price(high)
+        self._validate_price(low)
+        if high < low:
+            raise ValueError("candle high must be greater than or equal to low")
         stop, target = float(position["stop_loss"]), float(position["take_profit"])
         if open_price is not None:
             self._validate_price(open_price)
+            if open_price > high or open_price < low:
+                raise ValueError("candle open must be within its high/low range")
             # A long stop crossed by a downward opening gap cannot fill at the
             # unavailable stop price; use the worse candle open before costs.
             if open_price <= stop:
