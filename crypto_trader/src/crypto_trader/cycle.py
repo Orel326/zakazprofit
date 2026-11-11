@@ -14,7 +14,7 @@ from .config import Settings
 from .exchange import TIMEFRAME_MS, fetch_closed_ohlcv
 from .paper import PaperBroker
 from .quality import validate_ohlcv
-from .storage import save_candles
+from .storage import save_candles, save_team_decision
 from .team import analyze_symbol
 
 
@@ -209,6 +209,18 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
                     })
                 else:
                     decision = analyze_symbol(symbol, recent)
+                    save_team_decision(
+                        settings.database_path, settings.exchange_id, symbol,
+                        timeframe, ts,
+                        {
+                            "decision": decision.decision,
+                            "reason": decision.reason,
+                            "snapshot": decision.snapshot,
+                            "proposal": decision.proposal,
+                            "risk_approved": decision.risk_approved,
+                            "reports": decision.reports,
+                        },
+                    )
                     opened = None
                     rejection = None
                     if decision.decision == "WATCH" and decision.proposal:
