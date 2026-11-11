@@ -96,3 +96,16 @@ def test_trade_activity_lookup_is_exactly_scoped(tmp_path):
     assert paper.has_trade_activity("BTC/USDT", timestamp)
     assert not paper.has_trade_activity("ETH/USDT", timestamp)
     assert not paper.has_trade_activity("BTC/USDT", "2026-11-01T12:00:00+00:00")
+
+def test_rejects_non_finite_prices_and_risk_settings(tmp_path):
+    paper = broker(tmp_path)
+    with pytest.raises(ValueError, match="finite and positive"):
+        paper.open_position("BTC/USDT", float("nan"), 95, 110)
+    with pytest.raises(ValueError, match="finite and positive"):
+        paper.open_position("BTC/USDT", 100, 95, float("inf"))
+    with pytest.raises(ValueError, match="risk_per_trade"):
+        PaperBroker(tmp_path / "bad-risk.sqlite3",
+                    PaperConfig(risk_per_trade=float("nan")))
+    with pytest.raises(ValueError, match="max_open_positions"):
+        PaperBroker(tmp_path / "bad-count.sqlite3",
+                    PaperConfig(max_open_positions=0))
