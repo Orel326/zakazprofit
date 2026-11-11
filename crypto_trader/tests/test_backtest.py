@@ -34,3 +34,23 @@ def test_backtest_requires_warmup_history():
     import pytest
     with pytest.raises(ValueError, match="60 candles"):
         run_backtest("BTC/USDT", rows(59), HOUR)
+
+
+
+def test_backtest_analysis_receives_only_closed_prefix(monkeypatch):
+    import crypto_trader.backtest as module
+
+    seen_lengths = []
+
+    class Decision:
+        decision = "NO_TRADE"
+        proposal = None
+
+    def inspect_prefix(symbol, history):
+        seen_lengths.append(len(history))
+        assert len(history) <= 100
+        return Decision()
+
+    monkeypatch.setattr(module, "analyze_symbol", inspect_prefix)
+    module.run_backtest("BTC/USDT", rows(), HOUR, PaperConfig())
+    assert seen_lengths == list(range(60, 101))
