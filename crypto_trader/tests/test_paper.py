@@ -43,6 +43,28 @@ def test_stop_loss_wins_if_stop_and_target_hit_same_candle(tmp_path):
     assert result["exit_price"] < 95
 
 
+def test_gap_through_stop_fills_at_open_not_stop(tmp_path):
+    paper = broker(tmp_path)
+    paper.open_position("BTC/USDT", 100, 95, 110, "2026-11-01T10:00:00+00:00")
+    result = paper.process_candle(
+        "BTC/USDT", "2026-11-01T11:00:00+00:00",
+        high=101, low=89, open_price=90,
+    )
+    assert result["reason"] == "stop_loss_gap"
+    assert result["exit_price"] < 90
+
+
+def test_favorable_gap_target_is_filled_at_target(tmp_path):
+    paper = broker(tmp_path)
+    paper.open_position("ETH/USDT", 100, 95, 110, "2026-11-01T10:00:00+00:00")
+    result = paper.process_candle(
+        "ETH/USDT", "2026-11-01T11:00:00+00:00",
+        high=120, low=115, open_price=115,
+    )
+    assert result["reason"] == "take_profit"
+    assert result["exit_price"] < 110
+
+
 def test_rejects_duplicate_symbol_and_unsupported_symbol(tmp_path):
     paper = broker(tmp_path)
     paper.open_position("BTC/USDT", 100, 95, 110)
