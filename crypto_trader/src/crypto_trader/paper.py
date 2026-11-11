@@ -207,9 +207,10 @@ class PaperBroker:
                 "exit_fee": exit_fee, "net_pnl": pnl, "reason": reason}
 
     def process_candle(
-        self, symbol: str, timestamp: str, high: float, low: float
+        self, symbol: str, timestamp: str, high: float, low: float,
+        open_price: float | None = None,
     ) -> dict[str, Any] | None:
-        """Apply stop/target using OHLC extremes; if both hit, assume stop first."""
+        """Apply conservative OHLC exits, including adverse gaps through a stop."""
         with self._connect() as db:
             position = db.execute(
                 "SELECT * FROM paper_positions WHERE symbol=?", (symbol,)
@@ -217,6 +218,16 @@ class PaperBroker:
         if position is None:
             return None
         stop, target = float(position["stop_loss"]), float(position["take_profit"])
+        if open_price is not None:
+            self._validate_price(open_price)
+            # A long stop crossed by a downward opening gap cannot fill at the
+            # unavailable stop price; use the worse candle open before costs.
+            if open_price <= stop:
+                return self.close_position(symbol, open_price, "stop_loss_gap", timestamp)
+            # A favorable gap through a limit target is conservatively filled
+            # at the target, not at the better opening price.
+            if open_price >= target:
+                return self.close_position(symbol, target, "take_profit", timestamp)
         if low <= stop:
             return self.close_position(symbol, stop, "stop_loss", timestamp)
         if high >= target:
