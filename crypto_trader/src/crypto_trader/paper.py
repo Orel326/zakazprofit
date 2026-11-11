@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -65,12 +66,24 @@ class PaperBroker:
     def __init__(self, database_path: Path, config: PaperConfig | None = None):
         self.database_path = Path(database_path)
         self.config = config or PaperConfig()
-        if self.config.initial_balance <= 0:
-            raise ValueError("initial_balance must be positive")
-        if not 0 <= self.config.fee_rate < 0.1:
-            raise ValueError("fee_rate must be in [0, 0.1)")
-        if not 0 <= self.config.slippage_rate < 0.1:
-            raise ValueError("slippage_rate must be in [0, 0.1)")
+        if not math.isfinite(self.config.initial_balance) or self.config.initial_balance <= 0:
+            raise ValueError("initial_balance must be finite and positive")
+        if not math.isfinite(self.config.fee_rate) or not 0 <= self.config.fee_rate < 0.1:
+            raise ValueError("fee_rate must be finite and in [0, 0.1)")
+        if not math.isfinite(self.config.slippage_rate) or not 0 <= self.config.slippage_rate < 0.1:
+            raise ValueError("slippage_rate must be finite and in [0, 0.1)")
+        if not math.isfinite(self.config.risk_per_trade) or not 0 < self.config.risk_per_trade <= 1:
+            raise ValueError("risk_per_trade must be finite and in (0, 1]")
+        if (not math.isfinite(self.config.max_total_open_risk)
+                or not 0 < self.config.max_total_open_risk <= 1):
+            raise ValueError("max_total_open_risk must be finite and in (0, 1]")
+        if self.config.risk_per_trade > self.config.max_total_open_risk:
+            raise ValueError("risk_per_trade cannot exceed max_total_open_risk")
+        if not isinstance(self.config.max_open_positions, int) or self.config.max_open_positions < 1:
+            raise ValueError("max_open_positions must be a positive integer")
+        if (not math.isfinite(self.config.daily_loss_limit)
+                or not 0 < self.config.daily_loss_limit <= 1):
+            raise ValueError("daily_loss_limit must be finite and in (0, 1]")
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.executescript(SCHEMA)
@@ -92,8 +105,8 @@ class PaperBroker:
 
     @staticmethod
     def _validate_price(price: float) -> None:
-        if price <= 0:
-            raise ValueError("price must be positive")
+        if not math.isfinite(price) or price <= 0:
+            raise ValueError("price must be finite and positive")
 
     def account(self) -> dict[str, float]:
         with self._connect() as db:
@@ -118,6 +131,8 @@ class PaperBroker:
         if symbol not in ALLOWED_SYMBOLS:
             raise ValueError(f"unsupported symbol: {symbol}")
         self._validate_price(market_price)
+        self._validate_price(stop_loss)
+        self._validate_price(take_profit)
         if not 0 < stop_loss < market_price < take_profit:
             raise ValueError("require 0 < stop_loss < market_price < take_profit")
         timestamp = occurred_at or self._now()
