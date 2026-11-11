@@ -126,3 +126,14 @@ def test_process_candle_rejects_non_finite_or_invalid_ohlc(tmp_path):
         paper.process_candle("BTC/USDT", "2026-11-01T11:00:00+00:00",
                              high=105, low=99, open_price=98)
     assert len(paper.open_positions()) == 1
+
+
+
+def test_position_size_respects_risk_budget_after_fees_and_slippage(tmp_path):
+    paper = broker(tmp_path, risk_per_trade=0.005, max_total_open_risk=0.02)
+    opened = paper.open_position("BTC/USDT", 100, 95, 110,
+                                 "2026-11-01T10:00:00+00:00")
+    closed = paper.close_position("BTC/USDT", 95, "stop_loss",
+                                  "2026-11-01T11:00:00+00:00")
+    assert abs(closed["net_pnl"]) <= 100 * 0.005 + 1e-9
+    assert opened["quantity"] > 0
