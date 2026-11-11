@@ -134,10 +134,10 @@ def test_cycle_does_not_reenter_after_close_committed_before_checkpoint(tmp_path
         raise AssertionError("must not re-enter on replay of an executed candle")
 
     monkeypatch.setattr(cycle_module, "analyze_symbol", unexpected_analysis)
-    result = run_cycle(FakeExchange({"BTC/USDT": btc}), settings,
+    result = run_cycle(FakeExchange({"BTC/USDT": btc[:-1]}), settings,
                        broker, "1h", 100, now_ms)
     actions = [event["action"] for event in result["results"][0]["events"]]
-    assert "execution_already_recorded" in actions
+    assert actions == ["execution_already_recorded"]
     assert broker.open_positions() == []
     assert len(broker.trade_history()) == 2
 
