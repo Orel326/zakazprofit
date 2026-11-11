@@ -123,15 +123,18 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
         # target could have been touched in an unavailable candle.
         internal_gaps = [warning for warning in quality.warnings
                          if warning.startswith("gap before row")]
-        first_gap = (last_processed is not None
-                     and int(rows[0][0]) > last_processed + candle_ms)
+        expected_first_ms = None
+        if last_processed is not None:
+            expected_first_ms = last_processed + candle_ms
+        elif existing is not None:
+            expected_first_ms = _to_ms(existing["opened_at"]) + candle_ms
+        first_gap = (expected_first_ms is not None
+                     and int(rows[0][0]) > expected_first_ms)
         if internal_gaps or first_gap:
             results.append({
                 "symbol": symbol, "status": "data_gap_detected",
                 "warnings": internal_gaps,
-                "expected_first_candle_ms": (
-                    last_processed + candle_ms if last_processed is not None else None
-                ),
+                "expected_first_candle_ms": expected_first_ms,
                 "actual_first_candle_ms": int(rows[0][0]),
             })
             continue
