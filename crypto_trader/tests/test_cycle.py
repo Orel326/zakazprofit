@@ -48,6 +48,9 @@ def test_cycle_processes_each_closed_candle_only_once(tmp_path):
     assert len(first["results"]) == 2
     assert all(item["status"] == "processed" for item in first["results"])
     assert first["account"]["initial_balance"] == 100.0
+    from crypto_trader.storage import count_team_decisions
+    assert count_team_decisions(settings.database_path, "BTC/USDT", "1h") == 1
+    assert count_team_decisions(settings.database_path, "ETH/USDT", "1h") == 1
 
     history_after_first = len(broker.trade_history())
     second = run_cycle(exchange, settings, broker, "1h", 100, now_ms)
