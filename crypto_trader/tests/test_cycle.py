@@ -110,6 +110,35 @@ def test_entry_candle_is_not_replayed_as_an_exit_candle(tmp_path):
     assert len(broker.open_positions()) == 1
 
 
+def test_cycle_does_not_reenter_after_close_committed_before_checkpoint(tmp_path, monkeypatch):
+    import crypto_trader.cycle as cycle_module
+    now_ms = 2_000_000_000_000
+    start_ms = now_ms - 120 * HOUR
+    btc = rising_rows(start_ms, 120)
+    settings = Settings(database_path=tmp_path / "market.sqlite3",
+                        symbols=("BTC/USDT",))
+    broker = PaperBroker(settings.database_path)
+    close_candle = btc[-2]
+    timestamp = datetime.fromtimestamp(close_candle[0] / 1000,
+                                       timezone.utc).isoformat()
+    broker.open_position("BTC/USDT", 100, 95, 110, timestamp)
+    broker.close_position("BTC/USDT", 100, "stop_loss", timestamp)
+    from crypto_trader.cycle import _save_processed
+    _save_processed(settings.database_path, "BTC/USDT", btc[-3][0],
+                    settings.exchange_id, "1h")
+
+    def unexpected_analysis(*args, **kwargs):
+        raise AssertionError("must not re-enter on replay of an executed candle")
+
+    monkeypatch.setattr(cycle_module, "analyze_symbol", unexpected_analysis)
+    result = run_cycle(FakeExchange({"BTC/USDT": btc}), settings,
+                       broker, "1h", 100, now_ms)
+    actions = [event["action"] for event in result["results"][0]["events"]]
+    assert "execution_already_recorded" in actions
+    assert broker.open_positions() == []
+    assert len(broker.trade_history()) == 2
+
+
 def test_cycle_does_not_advance_checkpoint_across_missing_candle(tmp_path):
     now_ms = 2_000_000_000_000
     start_ms = now_ms - 120 * HOUR
