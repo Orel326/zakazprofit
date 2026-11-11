@@ -10,7 +10,6 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from .analysis import analyze_candles
 from .config import Settings
 from .exchange import TIMEFRAME_MS, fetch_closed_ohlcv
 from .paper import PaperBroker
@@ -81,13 +80,13 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
     exchange.load_markets()
     for symbol in settings.symbols:
         rows = fetch_closed_ohlcv(exchange, symbol, timeframe, since_ms, current_ms)
+        if not rows:
+            results.append({"symbol": symbol, "status": "no_closed_candles"})
+            continue
         quality = validate_ohlcv(rows, candle_ms)
         if not quality.is_valid:
             results.append({"symbol": symbol, "status": "data_rejected",
                             "errors": list(quality.errors)})
-            continue
-        if not rows:
-            results.append({"symbol": symbol, "status": "no_closed_candles"})
             continue
 
         save_candles(settings.database_path, settings.exchange_id, symbol,
@@ -143,9 +142,36 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
                 })
         _save_processed(settings.database_path, symbol, timestamp_ms)
 
-    equity = broker.record_equity(marks) if marks else None
+    # A transient feed failure must not crash the cycle when a position is open.
+    # Use the last stored close as a stale mark; never invent a price.
+    equity_marks = dict(marks)
+    stale_marks = []
+    for position in broker.open_positions():
+        symbol = position["symbol"]
+        if symbol in equity_marks:
+            continue
+        with sqlite3.connect(settings.database_path) as db:
+            row = db.execute(
+                """SELECT close FROM candles
+                   WHERE exchange=? AND symbol=? AND timeframe=?
+                   ORDER BY timestamp_ms DESC LIMIT 1""",
+                (settings.exchange_id, symbol, timeframe),
+            ).fetchone()
+        if row is not None and float(row[0]) > 0:
+            equity_marks[symbol] = float(row[0])
+            stale_marks.append(symbol)
+
+    equity = None
+    equity_error = None
+    if equity_marks or broker.open_positions():
+        try:
+            equity = broker.record_equity(equity_marks)
+        except ValueError as exc:
+            equity_error = str(exc)
+
     return {"timestamp": _utc_now(), "timeframe": timeframe,
-            "results": results, "account": broker.account(), "equity": equity}
+            "results": results, "account": broker.account(), "equity": equity,
+            "stale_equity_marks": stale_marks, "equity_error": equity_error}
 
 
 def run_forever(exchange, settings: Settings, broker: PaperBroker,
