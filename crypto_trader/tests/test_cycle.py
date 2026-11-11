@@ -67,7 +67,7 @@ def test_cycle_catches_up_every_missed_candle_and_closes_stop(tmp_path):
                                        timezone.utc).isoformat()
     broker.open_position("BTC/USDT", 100, 95, 110, opened_at)
     from crypto_trader.cycle import _save_processed
-    checkpoint = btc[-100][0]
+    checkpoint = btc[-101][0]
     _save_processed(settings.database_path, "BTC/USDT", checkpoint, settings.exchange_id, "1h")
     # The second missed candle crosses the stop, then price recovers.
     btc[-2][3] = 90.0
@@ -119,7 +119,7 @@ def test_cycle_does_not_reenter_after_close_committed_before_checkpoint(tmp_path
                         symbols=("BTC/USDT",))
     broker = PaperBroker(settings.database_path)
     close_candle = btc[-2]
-    timestamp = datetime.fromtimestamp(close_candle[0] / 1000,
+    timestamp = datetime.fromtimestamp((close_candle[0] + HOUR) / 1000,
                                        timezone.utc).isoformat()
     broker.open_position("BTC/USDT", 100, 95, 110, timestamp)
     broker.close_position("BTC/USDT", 100, "stop_loss", timestamp)
