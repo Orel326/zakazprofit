@@ -156,8 +156,17 @@ class PaperBroker:
             ).fetchone()
             if float(daily["pnl"]) <= -self.config.initial_balance * self.config.daily_loss_limit:
                 raise ValueError("daily loss limit reached")
+            # Size against the estimated net loss at the stop, including
+            # entry/exit fees and adverse slippage on both sides.
+            stop_fill = stop_loss * (1 - self.config.slippage_rate)
+            risk_per_unit = (
+                fill * (1 + self.config.fee_rate)
+                - stop_fill * (1 - self.config.fee_rate)
+            )
+            if not math.isfinite(risk_per_unit) or risk_per_unit <= 0:
+                raise ValueError("estimated stop risk per unit must be finite and positive")
             risk_budget = equity * self.config.risk_per_trade
-            quantity = risk_budget / (fill - stop_loss)
+            quantity = risk_budget / risk_per_unit
             cost = quantity * fill
             entry_fee = cost * self.config.fee_rate
             if cost + entry_fee > cash:
@@ -167,10 +176,15 @@ class PaperBroker:
             if quantity <= 0:
                 raise ValueError("insufficient virtual cash")
             existing_risk = sum(
-                float(p["quantity"]) * max(0.0, float(p["entry_price"]) - float(p["stop_loss"]))
+                float(p["quantity"]) * max(
+                    0.0,
+                    float(p["entry_price"]) * (1 + self.config.fee_rate)
+                    - float(p["stop_loss"]) * (1 - self.config.slippage_rate)
+                    * (1 - self.config.fee_rate),
+                )
                 for p in positions
             )
-            new_risk = quantity * max(0.0, fill - stop_loss)
+            new_risk = quantity * risk_per_unit
             if existing_risk + new_risk > equity * self.config.max_total_open_risk:
                 raise ValueError("maximum combined open risk would be exceeded")
             db.execute(
