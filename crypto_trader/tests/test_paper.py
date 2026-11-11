@@ -109,3 +109,20 @@ def test_rejects_non_finite_prices_and_risk_settings(tmp_path):
     with pytest.raises(ValueError, match="max_open_positions"):
         PaperBroker(tmp_path / "bad-count.sqlite3",
                     PaperConfig(max_open_positions=0))
+
+
+
+def test_process_candle_rejects_non_finite_or_invalid_ohlc(tmp_path):
+    paper = broker(tmp_path)
+    paper.open_position("BTC/USDT", 100, 95, 110,
+                        "2026-11-01T10:00:00+00:00")
+    with pytest.raises(ValueError, match="finite and positive"):
+        paper.process_candle("BTC/USDT", "2026-11-01T11:00:00+00:00",
+                             high=float("nan"), low=99)
+    with pytest.raises(ValueError, match="high must be greater"):
+        paper.process_candle("BTC/USDT", "2026-11-01T11:00:00+00:00",
+                             high=98, low=99)
+    with pytest.raises(ValueError, match="open must be within"):
+        paper.process_candle("BTC/USDT", "2026-11-01T11:00:00+00:00",
+                             high=105, low=99, open_price=98)
+    assert len(paper.open_positions()) == 1
