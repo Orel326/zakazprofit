@@ -112,6 +112,22 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
             results.append({"symbol": symbol, "status": "data_rejected",
                             "errors": list(quality.errors)})
             continue
+        # Never advance the checkpoint across missing market data: a stop or
+        # target could have been touched in an unavailable candle.
+        internal_gaps = [warning for warning in quality.warnings
+                         if warning.startswith("gap before row")]
+        first_gap = (last_processed is not None
+                     and int(rows[0][0]) > last_processed + candle_ms)
+        if internal_gaps or first_gap:
+            results.append({
+                "symbol": symbol, "status": "data_gap_detected",
+                "warnings": internal_gaps,
+                "expected_first_candle_ms": (
+                    last_processed + candle_ms if last_processed is not None else None
+                ),
+                "actual_first_candle_ms": int(rows[0][0]),
+            })
+            continue
 
         save_candles(settings.database_path, settings.exchange_id, symbol,
                      timeframe, rows, current_ms)
