@@ -110,6 +110,15 @@ def test_cycle_does_not_advance_checkpoint_across_missing_candle(tmp_path):
     assert _last_processed(settings.database_path, "BTC/USDT") == full_rows[-1][0]
 
 
+def test_cycle_checkpoints_are_independent_by_timeframe(tmp_path):
+    from crypto_trader.cycle import _last_processed, _save_processed
+    database = tmp_path / "market.sqlite3"
+    _save_processed(database, "BTC/USDT", 123456, "okx", "1h")
+    assert _last_processed(database, "BTC/USDT", "okx", "1h") == 123456
+    assert _last_processed(database, "BTC/USDT", "okx", "4h") is None
+    assert _last_processed(database, "BTC/USDT", "binance", "1h") is None
+
+
 def test_empty_feed_is_reported_without_crashing(tmp_path):
     now_ms = 2_000_000_000_000
     settings = Settings(database_path=tmp_path / "market.sqlite3",
