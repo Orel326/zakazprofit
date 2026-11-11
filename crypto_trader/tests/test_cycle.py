@@ -68,7 +68,7 @@ def test_cycle_catches_up_every_missed_candle_and_closes_stop(tmp_path):
     broker.open_position("BTC/USDT", 100, 95, 110, opened_at)
     from crypto_trader.cycle import _save_processed
     checkpoint = btc[-100][0]
-    _save_processed(settings.database_path, "BTC/USDT", checkpoint)
+    _save_processed(settings.database_path, "BTC/USDT", checkpoint, settings.exchange_id, "1h")
     # The second missed candle crosses the stop, then price recovers.
     btc[-2][3] = 90.0
     btc[-2][1] = 99.0
@@ -101,7 +101,7 @@ def test_cycle_does_not_advance_checkpoint_across_missing_candle(tmp_path):
     result = run_cycle(FakeExchange({"BTC/USDT": incomplete}), settings,
                        broker, "1h", 60, now_ms)
     assert result["results"][0]["status"] == "data_gap_detected"
-    assert _last_processed(settings.database_path, "BTC/USDT") == checkpoint
+    assert _last_processed(settings.database_path, "BTC/USDT", settings.exchange_id, "1h") == checkpoint
 
     # Once the missing candle is available, the cycle can safely catch up.
     result = run_cycle(FakeExchange({"BTC/USDT": full_rows}), settings,
