@@ -172,14 +172,27 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
             position = next((p for p in broker.open_positions()
                              if p["symbol"] == symbol), None)
             if position is not None:
-                event = broker.process_candle(
-                    symbol, timestamp, float(candle[2]), float(candle[3]),
-                    open_price=float(candle[1]),
-                )
+                if _to_ms(position["opened_at"]) >= ts:
+                    # Entry is filled at this candle close. Its earlier OHLC
+                    # range must never be used to trigger an exit.
+                    candle_events.append({
+                        "timestamp_ms": ts, "action": "entry_candle_replay_skipped",
+                    })
+                else:
+                    event = broker.process_candle(
+                        symbol, timestamp, float(candle[2]), float(candle[3]),
+                        open_price=float(candle[1]),
+                    )
+                    candle_events.append({
+                        "timestamp_ms": ts, "action": "manage_position", "exit": event,
+                        "position_open": any(p["symbol"] == symbol
+                                             for p in broker.open_positions()),
+                    })
+            elif broker.has_trade_activity(symbol, timestamp):
+                # A prior execution may have committed immediately before a
+                # crash. Do not analyze/re-enter on replay of that same candle.
                 candle_events.append({
-                    "timestamp_ms": ts, "action": "manage_position", "exit": event,
-                    "position_open": any(p["symbol"] == symbol
-                                         for p in broker.open_positions()),
+                    "timestamp_ms": ts, "action": "execution_already_recorded",
                 })
             else:
                 recent = _load_recent(
