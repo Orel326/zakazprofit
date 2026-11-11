@@ -86,6 +86,30 @@ def test_cycle_catches_up_every_missed_candle_and_closes_stop(tmp_path):
     assert close["reason"] == "stop_loss"
 
 
+def test_cycle_does_not_advance_checkpoint_across_missing_candle(tmp_path):
+    now_ms = 2_000_000_000_000
+    start_ms = now_ms - 120 * HOUR
+    full_rows = rising_rows(start_ms, 120)
+    settings = Settings(database_path=tmp_path / "market.sqlite3",
+                        symbols=("BTC/USDT",))
+    broker = PaperBroker(settings.database_path)
+    from crypto_trader.cycle import _last_processed, _save_processed
+    checkpoint = full_rows[-6][0]
+    _save_processed(settings.database_path, "BTC/USDT", checkpoint)
+    incomplete = [row for row in full_rows if row[0] != full_rows[-3][0]]
+
+    result = run_cycle(FakeExchange({"BTC/USDT": incomplete}), settings,
+                       broker, "1h", 60, now_ms)
+    assert result["results"][0]["status"] == "data_gap_detected"
+    assert _last_processed(settings.database_path, "BTC/USDT") == checkpoint
+
+    # Once the missing candle is available, the cycle can safely catch up.
+    result = run_cycle(FakeExchange({"BTC/USDT": full_rows}), settings,
+                       broker, "1h", 60, now_ms)
+    assert result["results"][0]["status"] == "processed"
+    assert _last_processed(settings.database_path, "BTC/USDT") == full_rows[-1][0]
+
+
 def test_empty_feed_is_reported_without_crashing(tmp_path):
     now_ms = 2_000_000_000_000
     settings = Settings(database_path=tmp_path / "market.sqlite3",
