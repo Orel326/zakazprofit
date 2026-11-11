@@ -95,7 +95,11 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
                          if p["symbol"] == symbol), None)
         last_processed = _last_processed(settings.database_path, symbol)
         since_ms = default_since_ms
-        if existing is not None and last_processed is None:
+        if last_processed is not None:
+            # Do not silently skip candles after a long outage; catch up from
+            # the exact persisted checkpoint, even beyond the indicator window.
+            since_ms = min(since_ms, last_processed + 1)
+        elif existing is not None:
             # Recover the full position lifetime if the cycle-state row is absent.
             since_ms = min(since_ms, max(0, _to_ms(existing["opened_at"]) - candle_ms))
 
