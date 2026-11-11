@@ -137,3 +137,14 @@ def test_position_size_respects_risk_budget_after_fees_and_slippage(tmp_path):
                                   "2026-11-01T11:00:00+00:00")
     assert abs(closed["net_pnl"]) <= 100 * 0.005 + 1e-9
     assert opened["quantity"] > 0
+
+
+
+def test_combined_open_risk_uses_cost_adjusted_stop_loss(tmp_path):
+    paper = broker(tmp_path, risk_per_trade=0.005, max_total_open_risk=0.005)
+    paper.open_position("BTC/USDT", 100, 95, 110,
+                        "2026-11-01T10:00:00+00:00")
+    with pytest.raises(ValueError, match="combined open risk"):
+        paper.open_position("ETH/USDT", 100, 95, 110,
+                            "2026-11-01T10:00:00+00:00")
+    assert len(paper.open_positions()) == 1
