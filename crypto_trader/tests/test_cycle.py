@@ -63,11 +63,12 @@ def test_cycle_catches_up_every_missed_candle_and_closes_stop(tmp_path):
                         symbols=("BTC/USDT",))
     broker = PaperBroker(settings.database_path)
     # Seed a persistent open position and cycle state before the outage.
-    opened_at = datetime.fromtimestamp((btc[-4][0] - HOUR) / 1000,
+    opened_at = datetime.fromtimestamp((btc[-101][0]) / 1000,
                                        timezone.utc).isoformat()
     broker.open_position("BTC/USDT", 100, 95, 110, opened_at)
     from crypto_trader.cycle import _save_processed
-    _save_processed(settings.database_path, "BTC/USDT", btc[-4][0] - HOUR)
+    checkpoint = btc[-100][0]
+    _save_processed(settings.database_path, "BTC/USDT", checkpoint)
     # The second missed candle crosses the stop, then price recovers.
     btc[-2][3] = 90.0
     btc[-2][1] = 99.0
@@ -75,9 +76,10 @@ def test_cycle_catches_up_every_missed_candle_and_closes_stop(tmp_path):
     btc[-2][4] = 100.0
     exchange = FakeExchange({"BTC/USDT": btc})
 
-    result = run_cycle(exchange, settings, broker, "1h", 100, now_ms)
+    # A 60-candle indicator window must not truncate a 99-candle outage backlog.
+    result = run_cycle(exchange, settings, broker, "1h", 60, now_ms)
     item = result["results"][0]
-    assert item["candles_processed"] >= 3
+    assert item["candles_processed"] >= 90
     assert broker.open_positions() == []
     close = broker.trade_history()[-1]
     assert close["side"] == "CLOSE"
