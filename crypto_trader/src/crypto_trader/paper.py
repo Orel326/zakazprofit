@@ -262,3 +262,16 @@ class PaperBroker:
         with self._connect() as db:
             rows = db.execute("SELECT * FROM paper_trades ORDER BY id").fetchall()
         return [dict(row) for row in rows]
+
+    def has_trade_activity(self, symbol: str, timestamp: str) -> bool:
+        """Return whether this symbol already had an execution at this candle time.
+
+        Used by the cycle to make replay safe if the process crashes after a
+        broker transaction commits but before its candle checkpoint is saved.
+        """
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT 1 FROM paper_trades WHERE symbol=? AND occurred_at=? LIMIT 1",
+                (symbol, timestamp),
+            ).fetchone()
+        return row is not None
