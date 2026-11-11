@@ -88,3 +88,11 @@ def test_max_open_positions_is_enforced(tmp_path):
     paper.open_position("BTC/USDT", 100, 95, 110)
     with pytest.raises(ValueError, match="maximum open positions"):
         paper.open_position("ETH/USDT", 100, 95, 110)
+
+def test_trade_activity_lookup_is_exactly_scoped(tmp_path):
+    paper = broker(tmp_path)
+    timestamp = "2026-11-01T11:00:00+00:00"
+    paper.open_position("BTC/USDT", 100, 95, 110, timestamp)
+    assert paper.has_trade_activity("BTC/USDT", timestamp)
+    assert not paper.has_trade_activity("ETH/USDT", timestamp)
+    assert not paper.has_trade_activity("BTC/USDT", "2026-11-01T12:00:00+00:00")
