@@ -63,7 +63,7 @@ def test_cycle_catches_up_every_missed_candle_and_closes_stop(tmp_path):
                         symbols=("BTC/USDT",))
     broker = PaperBroker(settings.database_path)
     # Seed a persistent open position and cycle state before the outage.
-    opened_at = datetime.fromtimestamp((btc[-101][0]) / 1000,
+    opened_at = datetime.fromtimestamp((btc[-100][0]) / 1000,
                                        timezone.utc).isoformat()
     broker.open_position("BTC/USDT", 100, 95, 110, opened_at)
     from crypto_trader.cycle import _save_processed
@@ -96,7 +96,7 @@ def test_entry_candle_is_not_replayed_as_an_exit_candle(tmp_path):
     settings = Settings(database_path=tmp_path / "market.sqlite3",
                         symbols=("BTC/USDT",))
     broker = PaperBroker(settings.database_path)
-    opened_at = datetime.fromtimestamp(entry_candle[0] / 1000,
+    opened_at = datetime.fromtimestamp((entry_candle[0] + HOUR) / 1000,
                                        timezone.utc).isoformat()
     broker.open_position("BTC/USDT", 100, 95, 110, opened_at)
     from crypto_trader.cycle import _save_processed
@@ -172,7 +172,7 @@ def test_cycle_halts_if_open_position_history_is_truncated(tmp_path):
     settings = Settings(database_path=tmp_path / "market.sqlite3",
                         symbols=("BTC/USDT",))
     broker = PaperBroker(settings.database_path)
-    opened_at = datetime.fromtimestamp(all_rows[10][0] / 1000,
+    opened_at = datetime.fromtimestamp(all_rows[11][0] / 1000,
                                        timezone.utc).isoformat()
     broker.open_position("BTC/USDT", 100, 95, 110, opened_at)
 
