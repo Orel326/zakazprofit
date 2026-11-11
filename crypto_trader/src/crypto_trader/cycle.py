@@ -127,7 +127,7 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
         if last_processed is not None:
             expected_first_ms = last_processed + candle_ms
         elif existing is not None:
-            expected_first_ms = _to_ms(existing["opened_at"]) + candle_ms
+            expected_first_ms = _to_ms(existing["opened_at"])
         first_gap = (expected_first_ms is not None
                      and int(rows[0][0]) > expected_first_ms)
         if internal_gaps or first_gap:
@@ -151,7 +151,7 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
                 pending = rows[-1:]
             else:
                 opened_ms = _to_ms(existing["opened_at"])
-                pending = [row for row in rows if int(row[0]) > opened_ms]
+                pending = [row for row in rows if int(row[0]) + candle_ms > opened_ms]
         else:
             pending = [row for row in rows if int(row[0]) > last_processed]
 
@@ -168,11 +168,14 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
         candle_events = []
         for candle in pending:
             ts = int(candle[0])
-            timestamp = datetime.fromtimestamp(ts / 1000, timezone.utc).isoformat()
+            # Execution is observed at candle close, not at its opening timestamp.
+            timestamp = datetime.fromtimestamp(
+                (ts + candle_ms) / 1000, timezone.utc
+            ).isoformat()
             position = next((p for p in broker.open_positions()
                              if p["symbol"] == symbol), None)
             if position is not None:
-                if _to_ms(position["opened_at"]) >= ts:
+                if _to_ms(position["opened_at"]) > ts:
                     # Entry is filled at this candle close. Its earlier OHLC
                     # range must never be used to trigger an exit.
                     candle_events.append({
