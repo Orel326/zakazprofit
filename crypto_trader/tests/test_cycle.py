@@ -110,6 +110,25 @@ def test_cycle_does_not_advance_checkpoint_across_missing_candle(tmp_path):
     assert _last_processed(settings.database_path, "BTC/USDT") == full_rows[-1][0]
 
 
+def test_cycle_halts_if_open_position_history_is_truncated(tmp_path):
+    now_ms = 2_000_000_000_000
+    old_start = now_ms - 100 * HOUR
+    all_rows = rising_rows(old_start, 100)
+    # Exchange response contains only recent candles, not the position lifetime.
+    truncated = all_rows[-10:]
+    settings = Settings(database_path=tmp_path / "market.sqlite3",
+                        symbols=("BTC/USDT",))
+    broker = PaperBroker(settings.database_path)
+    opened_at = datetime.fromtimestamp(all_rows[10][0] / 1000,
+                                       timezone.utc).isoformat()
+    broker.open_position("BTC/USDT", 100, 95, 110, opened_at)
+
+    result = run_cycle(FakeExchange({"BTC/USDT": truncated}), settings,
+                       broker, "1h", 60, now_ms)
+    assert result["results"][0]["status"] == "data_gap_detected"
+    assert len(broker.open_positions()) == 1
+
+
 def test_cycle_checkpoints_are_independent_by_timeframe(tmp_path):
     from crypto_trader.cycle import _last_processed, _save_processed
     database = tmp_path / "market.sqlite3"
