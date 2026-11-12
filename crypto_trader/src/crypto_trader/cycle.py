@@ -14,7 +14,7 @@ from .config import Settings
 from .exchange import TIMEFRAME_MS, fetch_closed_ohlcv
 from .paper import PaperBroker
 from .quality import validate_ohlcv
-from .storage import save_candles, save_team_decision
+from .storage import connect, save_candles, save_team_decision
 from .team import analyze_symbol
 
 
@@ -256,7 +256,7 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
         symbol = position["symbol"]
         if symbol in equity_marks:
             continue
-        with sqlite3.connect(settings.database_path) as db:
+        with connect(settings.database_path) as db:
             row = db.execute(
                 """SELECT close FROM candles
                    WHERE exchange=? AND symbol=? AND timeframe=?
