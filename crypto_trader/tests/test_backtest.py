@@ -25,7 +25,7 @@ def test_backtest_reports_metrics_and_benchmark_in_isolated_simulation():
 def test_backtest_rejects_gaps():
     import pytest
     candles = rows()
-    candles[75][0] += HOUR
+    candles.pop(75)
     with pytest.raises(ValueError, match="gaps"):
         run_backtest("BTC/USDT", candles, HOUR)
 
