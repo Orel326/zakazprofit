@@ -1,11 +1,11 @@
-"""Run an isolated historical backtest using public exchange candles."""
+"""Run isolated historical and walk-forward paper backtests using public candles."""
 from __future__ import annotations
 
 import argparse
 import json
 from datetime import datetime, timezone
 
-from .backtest import run_backtest
+from .backtest import run_backtest, run_walk_forward
 from .config import Settings
 from .exchange import TIMEFRAME_MS, create_exchange, fetch_closed_ohlcv
 from .paper import PaperConfig
@@ -17,9 +17,10 @@ def main() -> int:
     parser.add_argument("--timeframe", default=settings.default_timeframe, choices=tuple(TIMEFRAME_MS))
     parser.add_argument("--days", type=int, default=180)
     parser.add_argument("--candles", type=int, default=0, help="optional maximum candle count")
+    parser.add_argument("--walk-forward-folds", type=int, default=4)
     args = parser.parse_args()
-    if args.days < 1 or args.candles < 0:
-        parser.error("--days must be >= 1 and --candles must be >= 0")
+    if args.days < 1 or args.candles < 0 or args.walk_forward_folds < 2:
+        parser.error("--days must be >= 1, --candles >= 0 and --walk-forward-folds >= 2")
     now = int(datetime.now(timezone.utc).timestamp() * 1000)
     since = max(0, now - args.days * 86_400_000)
     exchange = create_exchange(settings.exchange_id)
@@ -31,7 +32,13 @@ def main() -> int:
             if args.candles:
                 candles = candles[-args.candles:]
             try:
-                output[symbol] = run_backtest(symbol, candles, TIMEFRAME_MS[args.timeframe], PaperConfig())
+                config = PaperConfig()
+                baseline = run_backtest(symbol, candles, TIMEFRAME_MS[args.timeframe], config)
+                baseline["walk_forward"] = run_walk_forward(
+                    symbol, candles, TIMEFRAME_MS[args.timeframe],
+                    folds=args.walk_forward_folds, config=config,
+                )
+                output[symbol] = baseline
             except ValueError as exc:
                 output[symbol] = {"status": "rejected", "reason": str(exc),
                                   "candles_received": len(candles)}
