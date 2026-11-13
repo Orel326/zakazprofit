@@ -33,6 +33,46 @@ def _metrics(curve: list[float], trades: list[dict], initial: float) -> dict:
     }
 
 
+
+def _trade_diagnostics(trades: list[dict]) -> dict:
+    """Summarize realized outcomes without changing execution or strategy rules."""
+    by_reason: dict[str, dict] = {}
+    wins = [float(t["pnl"]) for t in trades if float(t["pnl"]) > 0]
+    losses = [float(t["pnl"]) for t in trades if float(t["pnl"]) < 0]
+    for trade in trades:
+        reason = str(trade["reason"])
+        item = by_reason.setdefault(reason, {"trades": 0, "net_pnl": 0.0})
+        item["trades"] += 1
+        item["net_pnl"] += float(trade["pnl"])
+    average_win = mean(wins) if wins else 0.0
+    average_loss = abs(mean(losses)) if losses else 0.0
+    return {
+        "by_exit_reason": by_reason,
+        "winning_trades": len(wins),
+        "losing_trades": len(losses),
+        "average_win": average_win,
+        "average_loss": average_loss,
+        "average_win_to_loss_ratio": average_win / average_loss if average_loss else None,
+        "break_even_win_rate_pct": (
+            average_loss / (average_loss + average_win) * 100
+            if average_win + average_loss else None
+        ),
+        "actual_win_rate_pct": len(wins) / len(trades) * 100 if trades else 0.0,
+        "loss_streak_max": _max_loss_streak(trades),
+    }
+
+
+def _max_loss_streak(trades: list[dict]) -> int:
+    current = maximum = 0
+    for trade in trades:
+        if float(trade["pnl"]) < 0:
+            current += 1
+            maximum = max(maximum, current)
+        else:
+            current = 0
+    return maximum
+
+
 def run_backtest(
     symbol: str,
     rows: Sequence[Sequence[float]],
@@ -117,6 +157,7 @@ def run_backtest(
             "to_timestamp_ms": int(final_candle[0]), "timeframe_ms": timeframe_ms,
         }
         result["trades"] = closed
+        result["trade_diagnostics"] = _trade_diagnostics(closed)
         result["equity_curve"] = curve
         result["execution_model"] = {
             "fee_rate": cfg.fee_rate, "slippage_rate": cfg.slippage_rate,
