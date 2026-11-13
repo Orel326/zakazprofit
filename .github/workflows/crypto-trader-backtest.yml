@@ -20,6 +20,9 @@ on:
   push:
     paths:
       - ".github/workflows/crypto-trader-backtest.yml"
+      - "crypto_trader/src/crypto_trader/exchange.py"
+      - "crypto_trader/src/crypto_trader/backtest_cli.py"
+      - "crypto_trader/src/crypto_trader/backtest.py"
 
 permissions:
   contents: read
