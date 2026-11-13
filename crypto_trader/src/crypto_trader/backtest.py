@@ -242,7 +242,7 @@ def run_backtest(
             curve[-1] = broker.account()["cash"]
 
         closed = [
-            _attach_trade_context(t, contexts_by_trade_id.get(int(t["id"])))
+            _attach_trade_context(t, contexts_by_trade_id.get(int(t.get("id", -1))))
             for t in broker.trade_history() if t["side"] == "CLOSE"
         ]
         result = _metrics(curve, closed, cfg.initial_balance)
