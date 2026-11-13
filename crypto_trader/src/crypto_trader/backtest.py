@@ -73,6 +73,55 @@ def _max_loss_streak(trades: list[dict]) -> int:
     return maximum
 
 
+def _rsi_bucket(value: float | None) -> str:
+    if value is None:
+        return "unknown"
+    if value < 30:
+        return "<30"
+    if value < 45:
+        return "30-45"
+    if value < 55:
+        return "45-55"
+    if value < 70:
+        return "55-70"
+    return ">=70"
+
+
+def _attach_trade_context(trade: dict, context: dict | None) -> dict:
+    enriched = dict(trade)
+    if context:
+        enriched.update(context)
+    return enriched
+
+
+def _entry_diagnostics(trades: list[dict]) -> dict:
+    """Group realized outcomes by the market state recorded at entry."""
+    groups: dict[str, dict] = {}
+    for trade in trades:
+        snapshot = trade.get("entry_snapshot") or {}
+        trend = str(snapshot.get("trend", "unknown"))
+        rsi_bucket = _rsi_bucket(snapshot.get("rsi"))
+        key = f"{trend}|RSI {rsi_bucket}"
+        group = groups.setdefault(key, {
+            "trades": 0, "wins": 0, "net_pnl": 0.0,
+            "average_mfe_pct": [], "average_mae_pct": [],
+        })
+        pnl = float(trade["pnl"])
+        group["trades"] += 1
+        group["wins"] += int(pnl > 0)
+        group["net_pnl"] += pnl
+        if trade.get("max_favorable_excursion_pct") is not None:
+            group["average_mfe_pct"].append(float(trade["max_favorable_excursion_pct"]))
+        if trade.get("max_adverse_excursion_pct") is not None:
+            group["average_mae_pct"].append(float(trade["max_adverse_excursion_pct"]))
+    for group in groups.values():
+        group["win_rate_pct"] = group["wins"] / group["trades"] * 100
+        for field in ("average_mfe_pct", "average_mae_pct"):
+            values = group[field]
+            group[field] = mean(values) if values else None
+    return groups
+
+
 def run_backtest(
     symbol: str,
     rows: Sequence[Sequence[float]],
@@ -81,12 +130,13 @@ def run_backtest(
     start_index: int = 0,
     end_index: int | None = None,
 ) -> dict:
-    """Run one chronological test window.
+    """Run one chronological test window with auditable entry/exit context.
 
     Indicators may use candles before start_index as warm-up, but no trades or
     equity observations are generated before it. end_index is exclusive.
     Decisions use no candle after the signal close; open positions are
-    liquidated at the final candle close with normal costs.
+    liquidated at the final candle close with normal costs. MFE/MAE only use
+    candles after the entry close, avoiding entry-candle look-ahead.
     """
     end = len(rows) if end_index is None else end_index
     if end > len(rows) or end < 60:
@@ -103,6 +153,20 @@ def run_backtest(
     with tempfile.TemporaryDirectory(prefix="crypto-backtest-") as temp_dir:
         broker = PaperBroker(Path(temp_dir) / "isolated.sqlite3", cfg)
         curve: list[float] = []
+        active_context: dict | None = None
+        contexts_by_trade_id: dict[int, dict] = {}
+
+        def save_latest_close_context() -> None:
+            nonlocal active_context
+            history = broker.trade_history()
+            close_trade = next(
+                (trade for trade in reversed(history) if trade["side"] == "CLOSE"),
+                None,
+            )
+            if close_trade is not None and active_context is not None:
+                contexts_by_trade_id[int(close_trade["id"])] = active_context
+            active_context = None
+
         for index in range(start_index, end):
             candle = rows[index]
             close_ms = int(candle[0]) + timeframe_ms
@@ -114,16 +178,42 @@ def run_backtest(
                     position["opened_at"].replace("Z", "+00:00")
                 ).timestamp() * 1000)
                 if close_ms > opened_ms:
-                    broker.process_candle(symbol, timestamp, float(candle[2]),
-                                           float(candle[3]), open_price=float(candle[1]))
+                    if active_context is not None:
+                        entry_price = float(active_context["entry_price"])
+                        high, low = float(candle[2]), float(candle[3])
+                        active_context["hold_bars"] += 1
+                        active_context["max_favorable_excursion_pct"] = max(
+                            float(active_context["max_favorable_excursion_pct"]),
+                            (high / entry_price - 1) * 100,
+                        )
+                        active_context["max_adverse_excursion_pct"] = min(
+                            float(active_context["max_adverse_excursion_pct"]),
+                            (low / entry_price - 1) * 100,
+                        )
+                    broker.process_candle(
+                        symbol, timestamp, float(candle[2]), float(candle[3]),
+                        open_price=float(candle[1]),
+                    )
+                    if not broker.open_positions():
+                        save_latest_close_context()
             elif index >= 59 and not broker.has_trade_activity(symbol, timestamp):
                 decision = analyze_symbol(symbol, rows[:index + 1])
                 if decision.decision == "WATCH" and decision.proposal:
                     proposal = decision.proposal
                     try:
-                        broker.open_position(symbol, float(proposal["reference_price"]),
-                                             float(proposal["stop_loss"]),
-                                             float(proposal["take_profit"]), timestamp)
+                        opened = broker.open_position(
+                            symbol, float(proposal["reference_price"]),
+                            float(proposal["stop_loss"]), float(proposal["take_profit"]),
+                            timestamp,
+                        )
+                        active_context = {
+                            "entry_timestamp": timestamp,
+                            "entry_price": float(opened["entry_price"]),
+                            "entry_snapshot": dict(decision.snapshot),
+                            "hold_bars": 0,
+                            "max_favorable_excursion_pct": 0.0,
+                            "max_adverse_excursion_pct": 0.0,
+                        }
                     except ValueError:
                         pass
             if broker.open_positions():
@@ -136,10 +226,25 @@ def run_backtest(
         final_ms = int(final_candle[0]) + timeframe_ms
         final_time = datetime.fromtimestamp(final_ms / 1000, timezone.utc).isoformat()
         if broker.open_positions():
+            if active_context is not None:
+                entry_price = float(active_context["entry_price"])
+                active_context["hold_bars"] += 1
+                active_context["max_favorable_excursion_pct"] = max(
+                    float(active_context["max_favorable_excursion_pct"]),
+                    (float(final_candle[2]) / entry_price - 1) * 100,
+                )
+                active_context["max_adverse_excursion_pct"] = min(
+                    float(active_context["max_adverse_excursion_pct"]),
+                    (float(final_candle[3]) / entry_price - 1) * 100,
+                )
             broker.close_position(symbol, float(final_candle[4]), "end_of_backtest", final_time)
+            save_latest_close_context()
             curve[-1] = broker.account()["cash"]
 
-        closed = [t for t in broker.trade_history() if t["side"] == "CLOSE"]
+        closed = [
+            _attach_trade_context(t, contexts_by_trade_id.get(int(t["id"])))
+            for t in broker.trade_history() if t["side"] == "CLOSE"
+        ]
         result = _metrics(curve, closed, cfg.initial_balance)
         first, last = float(rows[start_index][4]), float(final_candle[4])
         entry = first * (1 + cfg.slippage_rate)
@@ -158,11 +263,13 @@ def run_backtest(
         }
         result["trades"] = closed
         result["trade_diagnostics"] = _trade_diagnostics(closed)
+        result["entry_diagnostics"] = _entry_diagnostics(closed)
         result["equity_curve"] = curve
         result["execution_model"] = {
             "fee_rate": cfg.fee_rate, "slippage_rate": cfg.slippage_rate,
             "terminal_liquidation": True,
             "decision_timing": "signal at candle close; exits start on next candle",
+            "excursion_measurement": "MFE/MAE use subsequent candle high/low only; entry candle excluded",
         }
         return result
 
