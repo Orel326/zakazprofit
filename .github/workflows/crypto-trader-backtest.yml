@@ -23,6 +23,7 @@ on:
       - "crypto_trader/src/crypto_trader/exchange.py"
       - "crypto_trader/src/crypto_trader/backtest_cli.py"
       - "crypto_trader/src/crypto_trader/backtest.py"
+      - "crypto_trader/tests/test_backtest.py"
 
 permissions:
   contents: read
