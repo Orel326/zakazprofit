@@ -4,6 +4,7 @@ from __future__ import annotations
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import mean, median
 from typing import Sequence
 
 from .paper import PaperBroker, PaperConfig
@@ -32,15 +33,28 @@ def _metrics(curve: list[float], trades: list[dict], initial: float) -> dict:
     }
 
 
-def run_backtest(symbol: str, rows: Sequence[Sequence[float]], timeframe_ms: int,
-                 config: PaperConfig | None = None) -> dict:
-    """Run one symbol chronologically; decisions use no candle after the signal close.
+def run_backtest(
+    symbol: str,
+    rows: Sequence[Sequence[float]],
+    timeframe_ms: int,
+    config: PaperConfig | None = None,
+    start_index: int = 0,
+    end_index: int | None = None,
+) -> dict:
+    """Run one chronological test window.
 
-    Any open position is liquidated at the final candle close with normal costs.
+    Indicators may use candles before start_index as warm-up, but no trades or
+    equity observations are generated before it. end_index is exclusive.
+    Decisions use no candle after the signal close; open positions are
+    liquidated at the final candle close with normal costs.
     """
-    if len(rows) < 60:
-        raise ValueError("at least 60 candles are required for backtesting")
-    quality = validate_ohlcv(rows, timeframe_ms)
+    end = len(rows) if end_index is None else end_index
+    if end > len(rows) or end < 60:
+        raise ValueError("backtest end_index must include at least 60 available candles")
+    if start_index < 0 or start_index >= end:
+        raise ValueError("start_index must identify a candle inside the backtest window")
+    window = rows[:end]
+    quality = validate_ohlcv(window, timeframe_ms)
     if not quality.is_valid:
         raise ValueError("invalid OHLCV data: " + "; ".join(quality.errors))
     if quality.warnings:
@@ -49,7 +63,8 @@ def run_backtest(symbol: str, rows: Sequence[Sequence[float]], timeframe_ms: int
     with tempfile.TemporaryDirectory(prefix="crypto-backtest-") as temp_dir:
         broker = PaperBroker(Path(temp_dir) / "isolated.sqlite3", cfg)
         curve: list[float] = []
-        for index, candle in enumerate(rows):
+        for index in range(start_index, end):
+            candle = rows[index]
             close_ms = int(candle[0]) + timeframe_ms
             timestamp = datetime.fromtimestamp(close_ms / 1000, timezone.utc).isoformat()
             position = next((p for p in broker.open_positions()
@@ -77,15 +92,16 @@ def run_backtest(symbol: str, rows: Sequence[Sequence[float]], timeframe_ms: int
                 equity = broker.account()["cash"]
             curve.append(equity)
 
-        final_ms = int(rows[-1][0]) + timeframe_ms
+        final_candle = rows[end - 1]
+        final_ms = int(final_candle[0]) + timeframe_ms
         final_time = datetime.fromtimestamp(final_ms / 1000, timezone.utc).isoformat()
         if broker.open_positions():
-            broker.close_position(symbol, float(rows[-1][4]), "end_of_backtest", final_time)
+            broker.close_position(symbol, float(final_candle[4]), "end_of_backtest", final_time)
             curve[-1] = broker.account()["cash"]
 
         closed = [t for t in broker.trade_history() if t["side"] == "CLOSE"]
         result = _metrics(curve, closed, cfg.initial_balance)
-        first, last = float(rows[0][4]), float(rows[-1][4])
+        first, last = float(rows[start_index][4]), float(final_candle[4])
         entry = first * (1 + cfg.slippage_rate)
         qty = cfg.initial_balance / (entry * (1 + cfg.fee_rate))
         exit_fill = last * (1 - cfg.slippage_rate)
@@ -94,9 +110,12 @@ def run_backtest(symbol: str, rows: Sequence[Sequence[float]], timeframe_ms: int
             "ending_equity": benchmark_end, "net_pnl": benchmark_end - cfg.initial_balance,
             "return_pct": (benchmark_end / cfg.initial_balance - 1) * 100,
         }
-        result["data"] = {"symbol": symbol, "candles": len(rows),
-                          "from_timestamp_ms": int(rows[0][0]),
-                          "to_timestamp_ms": int(rows[-1][0]), "timeframe_ms": timeframe_ms}
+        result["data"] = {
+            "symbol": symbol, "candles": end - start_index,
+            "warmup_candles": start_index, "total_candles_available": end,
+            "from_timestamp_ms": int(rows[start_index][0]),
+            "to_timestamp_ms": int(final_candle[0]), "timeframe_ms": timeframe_ms,
+        }
         result["trades"] = closed
         result["equity_curve"] = curve
         result["execution_model"] = {
@@ -105,3 +124,63 @@ def run_backtest(symbol: str, rows: Sequence[Sequence[float]], timeframe_ms: int
             "decision_timing": "signal at candle close; exits start on next candle",
         }
         return result
+
+
+def run_walk_forward(
+    symbol: str,
+    rows: Sequence[Sequence[float]],
+    timeframe_ms: int,
+    folds: int = 4,
+    config: PaperConfig | None = None,
+) -> dict:
+    """Evaluate contiguous out-of-sample folds with expanding historical warm-up.
+
+    Each fold starts with a fresh virtual account. Historical candles before a
+    fold are available only to warm up indicators; they cannot create trades
+    or affect that fold's starting equity.
+    """
+    if folds < 2:
+        raise ValueError("walk-forward requires at least 2 folds")
+    first_test_index = 60
+    test_candles = len(rows) - first_test_index
+    if test_candles < folds * 2:
+        raise ValueError("not enough candles for requested walk-forward folds")
+    boundaries = [
+        first_test_index + (test_candles * i) // folds
+        for i in range(folds + 1)
+    ]
+    results = []
+    for fold_index in range(folds):
+        start, end = boundaries[fold_index], boundaries[fold_index + 1]
+        fold = run_backtest(
+            symbol, rows[:end], timeframe_ms, config,
+            start_index=start, end_index=end,
+        )
+        results.append({
+            "fold": fold_index + 1,
+            "warmup_candles": start,
+            "test_candles": end - start,
+            "from_timestamp_ms": fold["data"]["from_timestamp_ms"],
+            "to_timestamp_ms": fold["data"]["to_timestamp_ms"],
+            "return_pct": fold["return_pct"],
+            "buy_and_hold_return_pct": fold["buy_and_hold"]["return_pct"],
+            "closed_trades": fold["closed_trades"],
+            "profit_factor": fold["profit_factor"],
+            "max_drawdown_pct": fold["max_drawdown_pct"],
+        })
+    returns = [float(item["return_pct"]) for item in results]
+    benchmarks = [float(item["buy_and_hold_return_pct"]) for item in results]
+    return {
+        "method": "expanding historical warm-up; contiguous out-of-sample test folds; fresh account per fold",
+        "folds": results,
+        "fold_count": folds,
+        "total_test_candles": sum(item["test_candles"] for item in results),
+        "total_closed_trades": sum(item["closed_trades"] for item in results),
+        "mean_fold_return_pct": mean(returns),
+        "median_fold_return_pct": median(returns),
+        "mean_buy_and_hold_return_pct": mean(benchmarks),
+        "profitable_folds": sum(value > 0 for value in returns),
+        "folds_beating_buy_and_hold": sum(
+            returns[i] > benchmarks[i] for i in range(folds)
+        ),
+    }
