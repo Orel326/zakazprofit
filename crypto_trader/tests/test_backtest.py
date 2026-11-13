@@ -178,6 +178,9 @@ def test_backtest_records_entry_snapshot_and_post_entry_excursions(monkeypatch):
     assert trade["hold_bars"] == 10
     assert trade["max_favorable_excursion_pct"] > 0
     assert trade["max_adverse_excursion_pct"] < 0
+    assert trade["planned_reward_risk_ratio"] > 1.9
+    assert trade["net_r_multiple"] is not None
+    assert result["trade_diagnostics"]["by_exit_reason"]["end_of_backtest"]["average_net_r"] is not None
     assert "bullish|RSI 55-70" in result["entry_diagnostics"]
     assert result["execution_model"]["excursion_measurement"].startswith(
         "MFE/MAE use subsequent candle"
