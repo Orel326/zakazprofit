@@ -1,0 +1,219 @@
+from datetime import datetime, timezone
+
+from crypto_trader.config import Settings
+from crypto_trader.cycle import run_cycle
+from crypto_trader.paper import PaperBroker
+
+
+HOUR = 3_600_000
+
+
+class FakeExchange:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def load_markets(self):
+        return {}
+
+    def fetch_ohlcv(self, symbol, timeframe="1h", since=None, limit=None):
+        return [row for row in self.rows.get(symbol, [])
+                if row[0] >= (since or 0)][:limit]
+
+    def close(self):
+        pass
+
+
+def rising_rows(start_ms, count=120):
+    rows = []
+    price = 100.0
+    for i in range(count):
+        price *= 1.0015 if i % 4 != 3 else 0.997
+        rows.append([start_ms + i * HOUR, price * 0.999, price * 1.002,
+                     price * 0.998, price, 1000.0])
+    return rows
+
+
+def test_cycle_processes_each_closed_candle_only_once(tmp_path):
+    count = 120
+    now_ms = 2_000_000_000_000
+    start_ms = now_ms - count * HOUR
+    rows = {symbol: rising_rows(start_ms, count)
+            for symbol in ("BTC/USDT", "ETH/USDT")}
+    exchange = FakeExchange(rows)
+    settings = Settings(database_path=tmp_path / "market.sqlite3",
+                        symbols=("BTC/USDT", "ETH/USDT"))
+    broker = PaperBroker(settings.database_path)
+
+    first = run_cycle(exchange, settings, broker, "1h", 100, now_ms)
+    assert len(first["results"]) == 2
+    assert all(item["status"] == "processed" for item in first["results"])
+    assert first["account"]["initial_balance"] == 100.0
+    from crypto_trader.storage import count_team_decisions
+    assert count_team_decisions(settings.database_path, "BTC/USDT", "1h") == 1
+    assert count_team_decisions(settings.database_path, "ETH/USDT", "1h") == 1
+
+    history_after_first = len(broker.trade_history())
+    second = run_cycle(exchange, settings, broker, "1h", 100, now_ms)
+    assert all(item["status"] == "no_new_candle" for item in second["results"])
+    assert len(broker.trade_history()) == history_after_first
+
+
+def test_cycle_catches_up_every_missed_candle_and_closes_stop(tmp_path):
+    now_ms = 2_000_000_000_000
+    start_ms = now_ms - 120 * HOUR
+    btc = rising_rows(start_ms, 120)
+    settings = Settings(database_path=tmp_path / "market.sqlite3",
+                        symbols=("BTC/USDT",))
+    broker = PaperBroker(settings.database_path)
+    # Seed a persistent open position and cycle state before the outage.
+    opened_at = datetime.fromtimestamp((btc[-100][0]) / 1000,
+                                       timezone.utc).isoformat()
+    broker.open_position("BTC/USDT", 100, 95, 110, opened_at)
+    from crypto_trader.cycle import _save_processed
+    checkpoint = btc[-101][0]
+    _save_processed(settings.database_path, "BTC/USDT", checkpoint, settings.exchange_id, "1h")
+    # The second missed candle crosses the stop, then price recovers.
+    btc[-2][3] = 90.0
+    btc[-2][1] = 99.0
+    btc[-2][2] = 101.0
+    btc[-2][4] = 100.0
+    exchange = FakeExchange({"BTC/USDT": btc})
+
+    # A 60-candle indicator window must not truncate a 99-candle outage backlog.
+    result = run_cycle(exchange, settings, broker, "1h", 60, now_ms)
+    item = result["results"][0]
+    assert item["candles_processed"] >= 90
+    assert broker.open_positions() == []
+    close = broker.trade_history()[-1]
+    assert close["side"] == "CLOSE"
+    assert close["reason"] == "stop_loss"
+
+
+def test_entry_candle_is_not_replayed_as_an_exit_candle(tmp_path):
+    now_ms = 2_000_000_000_000
+    start_ms = now_ms - 120 * HOUR
+    btc = rising_rows(start_ms, 120)
+    entry_candle = btc[-2]
+    # This candle's low predates a close-price entry and must not stop it out.
+    entry_candle[3] = 90.0
+    settings = Settings(database_path=tmp_path / "market.sqlite3",
+                        symbols=("BTC/USDT",))
+    broker = PaperBroker(settings.database_path)
+    opened_at = datetime.fromtimestamp((entry_candle[0] + HOUR) / 1000,
+                                       timezone.utc).isoformat()
+    broker.open_position("BTC/USDT", 100, 95, 110, opened_at)
+    from crypto_trader.cycle import _save_processed
+    _save_processed(settings.database_path, "BTC/USDT", btc[-3][0],
+                    settings.exchange_id, "1h")
+
+    result = run_cycle(FakeExchange({"BTC/USDT": btc}), settings,
+                       broker, "1h", 100, now_ms)
+    actions = [event["action"] for event in result["results"][0]["events"]]
+    assert "entry_candle_replay_skipped" in actions
+    assert len(broker.open_positions()) == 1
+
+
+def test_cycle_does_not_reenter_after_close_committed_before_checkpoint(tmp_path, monkeypatch):
+    import crypto_trader.cycle as cycle_module
+    now_ms = 2_000_000_000_000
+    start_ms = now_ms - 120 * HOUR
+    btc = rising_rows(start_ms, 120)
+    settings = Settings(database_path=tmp_path / "market.sqlite3",
+                        symbols=("BTC/USDT",))
+    broker = PaperBroker(settings.database_path)
+    close_candle = btc[-2]
+    timestamp = datetime.fromtimestamp((close_candle[0] + HOUR) / 1000,
+                                       timezone.utc).isoformat()
+    broker.open_position("BTC/USDT", 100, 95, 110, timestamp)
+    broker.close_position("BTC/USDT", 100, "stop_loss", timestamp)
+    from crypto_trader.cycle import _save_processed
+    _save_processed(settings.database_path, "BTC/USDT", btc[-3][0],
+                    settings.exchange_id, "1h")
+
+    def unexpected_analysis(*args, **kwargs):
+        raise AssertionError("must not re-enter on replay of an executed candle")
+
+    monkeypatch.setattr(cycle_module, "analyze_symbol", unexpected_analysis)
+    result = run_cycle(FakeExchange({"BTC/USDT": btc[:-1]}), settings,
+                       broker, "1h", 100, now_ms)
+    actions = [event["action"] for event in result["results"][0]["events"]]
+    assert actions == ["execution_already_recorded"]
+    assert broker.open_positions() == []
+    assert len(broker.trade_history()) == 2
+
+
+def test_cycle_does_not_advance_checkpoint_across_missing_candle(tmp_path):
+    now_ms = 2_000_000_000_000
+    start_ms = now_ms - 120 * HOUR
+    full_rows = rising_rows(start_ms, 120)
+    settings = Settings(database_path=tmp_path / "market.sqlite3",
+                        symbols=("BTC/USDT",))
+    broker = PaperBroker(settings.database_path)
+    from crypto_trader.cycle import _last_processed, _save_processed
+    checkpoint = full_rows[-6][0]
+    _save_processed(settings.database_path, "BTC/USDT", checkpoint)
+    incomplete = [row for row in full_rows if row[0] != full_rows[-3][0]]
+
+    result = run_cycle(FakeExchange({"BTC/USDT": incomplete}), settings,
+                       broker, "1h", 60, now_ms)
+    assert result["results"][0]["status"] == "data_gap_detected"
+    assert _last_processed(settings.database_path, "BTC/USDT", settings.exchange_id, "1h") == checkpoint
+
+    # Once the missing candle is available, the cycle can safely catch up.
+    result = run_cycle(FakeExchange({"BTC/USDT": full_rows}), settings,
+                       broker, "1h", 60, now_ms)
+    assert result["results"][0]["status"] == "processed"
+    assert _last_processed(settings.database_path, "BTC/USDT") == full_rows[-1][0]
+
+
+def test_cycle_halts_if_open_position_history_is_truncated(tmp_path):
+    now_ms = 2_000_000_000_000
+    old_start = now_ms - 100 * HOUR
+    all_rows = rising_rows(old_start, 100)
+    # Exchange response contains only recent candles, not the position lifetime.
+    truncated = all_rows[-10:]
+    settings = Settings(database_path=tmp_path / "market.sqlite3",
+                        symbols=("BTC/USDT",))
+    broker = PaperBroker(settings.database_path)
+    opened_at = datetime.fromtimestamp(all_rows[11][0] / 1000,
+                                       timezone.utc).isoformat()
+    broker.open_position("BTC/USDT", 100, 95, 110, opened_at)
+
+    result = run_cycle(FakeExchange({"BTC/USDT": truncated}), settings,
+                       broker, "1h", 60, now_ms)
+    assert result["results"][0]["status"] == "data_gap_detected"
+    assert len(broker.open_positions()) == 1
+
+
+def test_cycle_checkpoints_are_independent_by_timeframe(tmp_path):
+    from crypto_trader.cycle import _last_processed, _save_processed
+    database = tmp_path / "market.sqlite3"
+    _save_processed(database, "BTC/USDT", 123456, "okx", "1h")
+    assert _last_processed(database, "BTC/USDT", "okx", "1h") == 123456
+    assert _last_processed(database, "BTC/USDT", "okx", "4h") is None
+    assert _last_processed(database, "BTC/USDT", "binance", "1h") is None
+
+
+def test_empty_feed_is_reported_without_crashing(tmp_path):
+    now_ms = 2_000_000_000_000
+    settings = Settings(database_path=tmp_path / "market.sqlite3",
+                        symbols=("BTC/USDT",))
+    result = run_cycle(FakeExchange({"BTC/USDT": []}), settings,
+                       PaperBroker(settings.database_path), "1h", 100, now_ms)
+    assert result["results"][0]["status"] == "no_closed_candles"
+
+
+def test_position_and_cycle_state_survive_broker_restart(tmp_path):
+    now_ms = 2_000_000_000_000
+    start_ms = now_ms - 120 * HOUR
+    rows = {"BTC/USDT": rising_rows(start_ms, 120)}
+    settings = Settings(database_path=tmp_path / "market.sqlite3",
+                        symbols=("BTC/USDT",))
+    first_broker = PaperBroker(settings.database_path)
+    first = run_cycle(FakeExchange(rows), settings, first_broker, "1h", 100, now_ms)
+    trades_before = first_broker.trade_history()
+    second_broker = PaperBroker(settings.database_path)
+    second = run_cycle(FakeExchange(rows), settings, second_broker, "1h", 100, now_ms)
+    assert second["results"][0]["status"] == "no_new_candle"
+    assert second_broker.trade_history() == trades_before
+    assert second_broker.account()["initial_balance"] == 100.0

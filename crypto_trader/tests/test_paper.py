@@ -1,0 +1,150 @@
+from pathlib import Path
+
+import pytest
+
+from crypto_trader.paper import PaperBroker, PaperConfig
+
+
+def broker(tmp_path: Path, **overrides) -> PaperBroker:
+    values = {"initial_balance": 100.0, "fee_rate": 0.001,
+              "slippage_rate": 0.0005, "risk_per_trade": 0.005,
+              "max_total_open_risk": 0.02, "max_open_positions": 2,
+              "daily_loss_limit": 0.02}
+    values.update(overrides)
+    return PaperBroker(tmp_path / "paper.sqlite3", PaperConfig(**values))
+
+
+def test_account_is_persistent_and_initializes_only_once(tmp_path):
+    first = broker(tmp_path)
+    first.open_position("BTC/USDT", 100, 95, 110, "2026-11-01T10:00:00+00:00")
+    second = broker(tmp_path, initial_balance=99_000)
+    assert second.account()["initial_balance"] == 100
+    assert len(second.open_positions()) == 1
+
+
+def test_open_and_close_apply_fees_and_slippage(tmp_path):
+    paper = broker(tmp_path)
+    opened = paper.open_position("BTC/USDT", 100, 95, 110, "2026-11-01T10:00:00+00:00")
+    assert opened["entry_price"] > 100
+    assert opened["entry_fee"] > 0
+    closed = paper.close_position("BTC/USDT", 110, "manual", "2026-11-01T11:00:00+00:00")
+    assert closed["exit_price"] < 110
+    assert closed["net_pnl"] > 0
+    assert paper.open_positions() == []
+    assert [t["side"] for t in paper.trade_history()] == ["LONG", "CLOSE"]
+
+
+def test_stop_loss_wins_if_stop_and_target_hit_same_candle(tmp_path):
+    paper = broker(tmp_path)
+    paper.open_position("ETH/USDT", 100, 95, 110, "2026-11-01T10:00:00+00:00")
+    result = paper.process_candle("ETH/USDT", "2026-11-01T11:00:00+00:00", 112, 94)
+    assert result is not None
+    assert result["reason"] == "stop_loss"
+    assert result["exit_price"] < 95
+
+
+def test_gap_through_stop_fills_at_open_not_stop(tmp_path):
+    paper = broker(tmp_path)
+    paper.open_position("BTC/USDT", 100, 95, 110, "2026-11-01T10:00:00+00:00")
+    result = paper.process_candle(
+        "BTC/USDT", "2026-11-01T11:00:00+00:00",
+        high=101, low=89, open_price=90,
+    )
+    assert result["reason"] == "stop_loss_gap"
+    assert result["exit_price"] < 90
+
+
+def test_favorable_gap_target_is_filled_at_target(tmp_path):
+    paper = broker(tmp_path)
+    paper.open_position("ETH/USDT", 100, 95, 110, "2026-11-01T10:00:00+00:00")
+    result = paper.process_candle(
+        "ETH/USDT", "2026-11-01T11:00:00+00:00",
+        high=120, low=115, open_price=115,
+    )
+    assert result["reason"] == "take_profit"
+    assert result["exit_price"] < 110
+
+
+def test_rejects_duplicate_symbol_and_unsupported_symbol(tmp_path):
+    paper = broker(tmp_path)
+    paper.open_position("BTC/USDT", 100, 95, 110)
+    with pytest.raises(ValueError, match="already open"):
+        paper.open_position("BTC/USDT", 101, 96, 111)
+    with pytest.raises(ValueError, match="unsupported"):
+        paper.open_position("DOGE/USDT", 1, 0.9, 1.1)
+
+
+def test_rejects_invalid_stop_and_missing_mark_price(tmp_path):
+    paper = broker(tmp_path)
+    with pytest.raises(ValueError, match="stop_loss"):
+        paper.open_position("BTC/USDT", 100, 105, 110)
+    paper.open_position("BTC/USDT", 100, 95, 110)
+    with pytest.raises(ValueError, match="missing mark price"):
+        paper.record_equity({})
+
+
+def test_max_open_positions_is_enforced(tmp_path):
+    paper = broker(tmp_path, max_open_positions=1, max_total_open_risk=0.1)
+    paper.open_position("BTC/USDT", 100, 95, 110)
+    with pytest.raises(ValueError, match="maximum open positions"):
+        paper.open_position("ETH/USDT", 100, 95, 110)
+
+def test_trade_activity_lookup_is_exactly_scoped(tmp_path):
+    paper = broker(tmp_path)
+    timestamp = "2026-11-01T11:00:00+00:00"
+    paper.open_position("BTC/USDT", 100, 95, 110, timestamp)
+    assert paper.has_trade_activity("BTC/USDT", timestamp)
+    assert not paper.has_trade_activity("ETH/USDT", timestamp)
+    assert not paper.has_trade_activity("BTC/USDT", "2026-11-01T12:00:00+00:00")
+
+def test_rejects_non_finite_prices_and_risk_settings(tmp_path):
+    paper = broker(tmp_path)
+    with pytest.raises(ValueError, match="finite and positive"):
+        paper.open_position("BTC/USDT", float("nan"), 95, 110)
+    with pytest.raises(ValueError, match="finite and positive"):
+        paper.open_position("BTC/USDT", 100, 95, float("inf"))
+    with pytest.raises(ValueError, match="risk_per_trade"):
+        PaperBroker(tmp_path / "bad-risk.sqlite3",
+                    PaperConfig(risk_per_trade=float("nan")))
+    with pytest.raises(ValueError, match="max_open_positions"):
+        PaperBroker(tmp_path / "bad-count.sqlite3",
+                    PaperConfig(max_open_positions=0))
+
+
+
+def test_process_candle_rejects_non_finite_or_invalid_ohlc(tmp_path):
+    paper = broker(tmp_path)
+    paper.open_position("BTC/USDT", 100, 95, 110,
+                        "2026-11-01T10:00:00+00:00")
+    with pytest.raises(ValueError, match="finite and positive"):
+        paper.process_candle("BTC/USDT", "2026-11-01T11:00:00+00:00",
+                             high=float("nan"), low=99)
+    with pytest.raises(ValueError, match="high must be greater"):
+        paper.process_candle("BTC/USDT", "2026-11-01T11:00:00+00:00",
+                             high=98, low=99)
+    with pytest.raises(ValueError, match="open must be within"):
+        paper.process_candle("BTC/USDT", "2026-11-01T11:00:00+00:00",
+                             high=105, low=99, open_price=98)
+    assert len(paper.open_positions()) == 1
+
+
+
+def test_position_size_respects_risk_budget_after_fees_and_slippage(tmp_path):
+    paper = broker(tmp_path, risk_per_trade=0.005, max_total_open_risk=0.02)
+    opened = paper.open_position("BTC/USDT", 100, 95, 110,
+                                 "2026-11-01T10:00:00+00:00")
+    closed = paper.close_position("BTC/USDT", 95, "stop_loss",
+                                  "2026-11-01T11:00:00+00:00")
+    assert abs(closed["net_pnl"]) <= 100 * 0.005 + 1e-9
+    assert opened["quantity"] > 0
+
+
+
+def test_combined_open_risk_uses_cost_adjusted_stop_loss(tmp_path):
+    paper = broker(tmp_path, risk_per_trade=0.005, max_total_open_risk=0.005)
+    paper.open_position("BTC/USDT", 100, 95, 110,
+                        "2026-11-01T10:00:00+00:00")
+    with pytest.raises(ValueError, match="combined open risk"):
+        paper.open_position("ETH/USDT", 100, 95, 110,
+                            "2026-11-01T10:00:00+00:00")
+    assert len(paper.open_positions()) == 1

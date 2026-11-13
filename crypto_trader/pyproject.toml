@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crypto-trader-data"
+version = "0.1.0"
+description = "Public crypto market data ingestion for a paper-trading research system"
+requires-python = ">=3.11"
+dependencies = [
+  "ccxt>=4.4,<5",
+  "python-dotenv>=1.0,<2",
+]
+
+[project.scripts]
+paper-trader = "crypto_trader.paper_cli:main"
+crypto-backtest = "crypto_trader.backtest_cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0,<9", "pytest-cov>=5.0,<7"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
