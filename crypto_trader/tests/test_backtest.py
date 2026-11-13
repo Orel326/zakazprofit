@@ -32,7 +32,7 @@ def test_backtest_rejects_gaps():
 
 def test_backtest_requires_warmup_history():
     import pytest
-    with pytest.raises(ValueError, match="60 candles"):
+    with pytest.raises(ValueError, match="60 available candles"):
         run_backtest("BTC/USDT", rows(59), HOUR)
 
 
