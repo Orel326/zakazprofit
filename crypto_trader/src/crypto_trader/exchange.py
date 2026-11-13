@@ -47,8 +47,9 @@ def fetch_closed_ohlcv(
     cursor = since_ms
     by_timestamp = {}
 
-    # Paginate so small timeframes can retrieve more than the exchange's
-    # per-request limit of 1,000 candles.
+    # Exchanges may impose a lower page size than the requested limit.
+    # Continue until the requested time range is covered or the exchange
+    # returns no more rows; a short page is not proof that history is complete.
     while cursor < current_ms:
         batch = exchange.fetch_ohlcv(
             symbol, timeframe=timeframe, since=cursor, limit=1000
@@ -60,10 +61,8 @@ def fetch_closed_ohlcv(
             if timestamp + candle_ms <= current_ms:
                 by_timestamp[timestamp] = row
         last_timestamp = int(batch[-1][0])
-        if last_timestamp < cursor or len(batch) < 1000:
-            break
         next_cursor = last_timestamp + candle_ms
-        if next_cursor <= cursor:
+        if next_cursor <= cursor or last_timestamp < cursor:
             break
         cursor = next_cursor
 
