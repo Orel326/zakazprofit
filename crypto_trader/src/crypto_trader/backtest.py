@@ -49,8 +49,10 @@ def _trade_diagnostics(trades: list[dict]) -> dict:
         if trade.get("realized_price_r") is not None:
             item.setdefault("price_r_values", []).append(float(trade["realized_price_r"]))
     for item in by_reason.values():
-        item["average_net_r"] = mean(item.pop("net_r_values")) if item.get("net_r_values") else None
-        item["average_realized_price_r"] = mean(item.pop("price_r_values")) if item.get("price_r_values") else None
+        net_r_values = item.pop("net_r_values", [])
+        price_r_values = item.pop("price_r_values", [])
+        item["average_net_r"] = mean(net_r_values) if net_r_values else None
+        item["average_realized_price_r"] = mean(price_r_values) if price_r_values else None
     net_r_wins = [float(t["net_r_multiple"]) for t in trades
                   if float(t["pnl"]) > 0 and t.get("net_r_multiple") is not None]
     net_r_losses = [float(t["net_r_multiple"]) for t in trades
