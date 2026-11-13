@@ -33,13 +33,16 @@ def _metrics(curve: list[float], trades: list[dict], initial: float) -> dict:
 
 
 def run_backtest(symbol: str, rows: Sequence[Sequence[float]], timeframe_ms: int,
-                 config: PaperConfig | None = None) -> dict:
-    """Run one symbol chronologically; decisions use no candle after the signal close.
+                 config: PaperConfig | None = None, start_index: int = 59) -> dict:
+    """Run chronologically; trading starts at start_index, decisions use closed prefixes.
 
     Any open position is liquidated at the final candle close with normal costs.
+    Candles before start_index are indicator warm-up only and cannot generate trades.
     """
     if len(rows) < 60:
         raise ValueError("at least 60 candles are required for backtesting")
+    if not isinstance(start_index, int) or start_index < 59 or start_index >= len(rows):
+        raise ValueError("start_index must be an integer between 59 and the last candle index")
     quality = validate_ohlcv(rows, timeframe_ms)
     if not quality.is_valid:
         raise ValueError("invalid OHLCV data: " + "; ".join(quality.errors))
@@ -61,7 +64,7 @@ def run_backtest(symbol: str, rows: Sequence[Sequence[float]], timeframe_ms: int
                 if close_ms > opened_ms:
                     broker.process_candle(symbol, timestamp, float(candle[2]),
                                            float(candle[3]), open_price=float(candle[1]))
-            elif index >= 59 and not broker.has_trade_activity(symbol, timestamp):
+            elif index >= start_index and not broker.has_trade_activity(symbol, timestamp):
                 decision = analyze_symbol(symbol, rows[:index + 1])
                 if decision.decision == "WATCH" and decision.proposal:
                     proposal = decision.proposal
