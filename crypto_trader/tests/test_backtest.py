@@ -183,5 +183,5 @@ def test_backtest_records_entry_snapshot_and_post_entry_excursions(monkeypatch):
     assert result["trade_diagnostics"]["by_exit_reason"]["end_of_backtest"]["average_net_r"] is not None
     assert "bullish|RSI 55-70" in result["entry_diagnostics"]
     assert result["execution_model"]["excursion_measurement"].startswith(
-        "MFE/MAE use subsequent candle"
+        "MFE/MAE use full high/low only on survived candles"
     )
