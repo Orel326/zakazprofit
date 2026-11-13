@@ -141,3 +141,44 @@ def test_backtest_reports_realized_trade_diagnostics(monkeypatch):
     assert diagnostics["actual_win_rate_pct"] == pytest.approx(33.333333)
     assert diagnostics["loss_streak_max"] == 1
     assert diagnostics["by_exit_reason"]["stop_loss"]["trades"] == 2
+
+
+def test_backtest_records_entry_snapshot_and_post_entry_excursions(monkeypatch):
+    import crypto_trader.backtest as module
+
+    class Decision:
+        decision = "WATCH"
+        proposal = None
+
+        def __init__(self, price):
+            self.proposal = {
+                "reference_price": price,
+                "stop_loss": price * 0.5,
+                "take_profit": price * 2.0,
+            }
+            self.snapshot = {
+                "trend": "bullish",
+                "momentum": "positive",
+                "rsi": 62.0,
+                "atr_pct": 1.2,
+                "ema_fast": price * 1.01,
+                "ema_slow": price,
+            }
+
+    monkeypatch.setattr(
+        module, "analyze_symbol",
+        lambda symbol, history: Decision(float(history[-1][4])),
+    )
+    result = module.run_backtest("BTC/USDT", rows(70), HOUR, PaperConfig())
+
+    assert result["closed_trades"] == 1
+    trade = result["trades"][0]
+    assert trade["entry_snapshot"]["rsi"] == 62.0
+    assert trade["entry_snapshot"]["trend"] == "bullish"
+    assert trade["hold_bars"] == 10
+    assert trade["max_favorable_excursion_pct"] > 0
+    assert trade["max_adverse_excursion_pct"] < 0
+    assert "bullish|RSI 55-70" in result["entry_diagnostics"]
+    assert result["execution_model"]["excursion_measurement"].startswith(
+        "MFE/MAE use subsequent candle"
+    )
