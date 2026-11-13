@@ -97,3 +97,45 @@ def test_walk_forward_uses_contiguous_non_overlapping_test_folds(monkeypatch):
     assert [f["test_candles"] for f in result["folds"]] == [20, 20]
     assert result["folds"][0]["to_timestamp_ms"] < result["folds"][1]["from_timestamp_ms"]
     assert seen_lengths == list(range(61, 81)) + list(range(81, 101))
+
+
+
+def test_backtest_reports_realized_trade_diagnostics(monkeypatch):
+    import crypto_trader.backtest as module
+
+    class Decision:
+        decision = "NO_TRADE"
+        proposal = None
+
+    monkeypatch.setattr(module, "analyze_symbol", lambda symbol, history: Decision())
+
+    class FakeBroker:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def open_positions(self):
+            return []
+
+        def account(self):
+            return {"cash": 100.0}
+
+        def record_equity(self, *args, **kwargs):
+            return {"equity": 100.0}
+
+        def trade_history(self):
+            return [
+                {"side": "CLOSE", "pnl": -0.5, "reason": "stop_loss"},
+                {"side": "CLOSE", "pnl": 1.0, "reason": "take_profit"},
+                {"side": "CLOSE", "pnl": -0.5, "reason": "stop_loss"},
+            ]
+
+    monkeypatch.setattr(module, "PaperBroker", FakeBroker)
+    result = module.run_backtest("BTC/USDT", rows(), HOUR, PaperConfig())
+    diagnostics = result["trade_diagnostics"]
+    assert diagnostics["winning_trades"] == 1
+    assert diagnostics["losing_trades"] == 2
+    assert diagnostics["average_win_to_loss_ratio"] == 2.0
+    assert diagnostics["break_even_win_rate_pct"] == pytest.approx(33.333333)
+    assert diagnostics["actual_win_rate_pct"] == pytest.approx(33.333333)
+    assert diagnostics["loss_streak_max"] == 1
+    assert diagnostics["by_exit_reason"]["stop_loss"]["trades"] == 2
