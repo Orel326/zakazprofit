@@ -1,3 +1,5 @@
+import pytest
+
 from crypto_trader.backtest import run_backtest, run_walk_forward
 from crypto_trader.paper import PaperConfig
 
@@ -23,7 +25,6 @@ def test_backtest_reports_metrics_and_benchmark_in_isolated_simulation():
 
 
 def test_backtest_rejects_gaps():
-    import pytest
     candles = rows()
     candles.pop(75)
     with pytest.raises(ValueError, match="gaps"):
@@ -31,7 +32,6 @@ def test_backtest_rejects_gaps():
 
 
 def test_backtest_requires_warmup_history():
-    import pytest
     with pytest.raises(ValueError, match="60 available candles"):
         run_backtest("BTC/USDT", rows(59), HOUR)
 
@@ -99,7 +99,6 @@ def test_walk_forward_uses_contiguous_non_overlapping_test_folds(monkeypatch):
     assert seen_lengths == list(range(61, 81)) + list(range(81, 101))
 
 
-
 def test_backtest_reports_realized_trade_diagnostics(monkeypatch):
     import crypto_trader.backtest as module
 
@@ -115,6 +114,9 @@ def test_backtest_reports_realized_trade_diagnostics(monkeypatch):
 
         def open_positions(self):
             return []
+
+        def has_trade_activity(self, symbol, timestamp):
+            return False
 
         def account(self):
             return {"cash": 100.0}
