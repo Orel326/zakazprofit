@@ -1,0 +1,57 @@
+name: Crypto trader historical backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "History window in days"
+        required: true
+        default: "180"
+        type: string
+      timeframe:
+        description: "Candle timeframe"
+        required: true
+        default: "1h"
+        type: choice
+        options:
+          - 1h
+          - 4h
+          - 1d
+  push:
+    paths:
+      - ".github/workflows/crypto-trader-backtest.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: crypto_trader
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: crypto_trader/pyproject.toml
+      - name: Install project
+        run: python -m pip install .
+      - name: Run isolated historical paper backtest
+        env:
+          BACKTEST_DAYS: ${{ inputs.days || '180' }}
+          BACKTEST_TIMEFRAME: ${{ inputs.timeframe || '1h' }}
+        run: |
+          crypto-backtest --days "$BACKTEST_DAYS" --timeframe "$BACKTEST_TIMEFRAME" > backtest-report.json
+          cat backtest-report.json
+      - name: Upload backtest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crypto-backtest-report
+          path: crypto_trader/backtest-report.json
+          if-no-files-found: warn
+          retention-days: 14
