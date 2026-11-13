@@ -226,17 +226,8 @@ def run_backtest(
         final_ms = int(final_candle[0]) + timeframe_ms
         final_time = datetime.fromtimestamp(final_ms / 1000, timezone.utc).isoformat()
         if broker.open_positions():
-            if active_context is not None:
-                entry_price = float(active_context["entry_price"])
-                active_context["hold_bars"] += 1
-                active_context["max_favorable_excursion_pct"] = max(
-                    float(active_context["max_favorable_excursion_pct"]),
-                    (float(final_candle[2]) / entry_price - 1) * 100,
-                )
-                active_context["max_adverse_excursion_pct"] = min(
-                    float(active_context["max_adverse_excursion_pct"]),
-                    (float(final_candle[3]) / entry_price - 1) * 100,
-                )
+            # The final candle was already processed in the main loop; do not
+            # count it twice when recording terminal liquidation.
             broker.close_position(symbol, float(final_candle[4]), "end_of_backtest", final_time)
             save_latest_close_context()
             curve[-1] = broker.account()["cash"]
