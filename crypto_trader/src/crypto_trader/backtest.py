@@ -44,6 +44,17 @@ def _trade_diagnostics(trades: list[dict]) -> dict:
         item = by_reason.setdefault(reason, {"trades": 0, "net_pnl": 0.0})
         item["trades"] += 1
         item["net_pnl"] += float(trade["pnl"])
+        if trade.get("net_r_multiple") is not None:
+            item.setdefault("net_r_values", []).append(float(trade["net_r_multiple"]))
+        if trade.get("realized_price_r") is not None:
+            item.setdefault("price_r_values", []).append(float(trade["realized_price_r"]))
+    for item in by_reason.values():
+        item["average_net_r"] = mean(item.pop("net_r_values")) if item.get("net_r_values") else None
+        item["average_realized_price_r"] = mean(item.pop("price_r_values")) if item.get("price_r_values") else None
+    net_r_wins = [float(t["net_r_multiple"]) for t in trades
+                  if float(t["pnl"]) > 0 and t.get("net_r_multiple") is not None]
+    net_r_losses = [float(t["net_r_multiple"]) for t in trades
+                    if float(t["pnl"]) < 0 and t.get("net_r_multiple") is not None]
     average_win = mean(wins) if wins else 0.0
     average_loss = abs(mean(losses)) if losses else 0.0
     return {
@@ -59,6 +70,8 @@ def _trade_diagnostics(trades: list[dict]) -> dict:
         ),
         "actual_win_rate_pct": len(wins) / len(trades) * 100 if trades else 0.0,
         "loss_streak_max": _max_loss_streak(trades),
+        "average_winning_net_r": mean(net_r_wins) if net_r_wins else None,
+        "average_losing_net_r": mean(net_r_losses) if net_r_losses else None,
     }
 
 
@@ -91,6 +104,16 @@ def _attach_trade_context(trade: dict, context: dict | None) -> dict:
     enriched = dict(trade)
     if context:
         enriched.update(context)
+        entry = float(context["entry_price"])
+        stop = float(context["stop_loss"])
+        target = float(context["take_profit"])
+        exit_price = float(trade["price"])
+        risk_distance = entry - stop
+        if risk_distance > 0:
+            enriched["planned_reward_risk_ratio"] = (target - entry) / risk_distance
+            enriched["realized_price_r"] = (exit_price - entry) / risk_distance
+        risk_usdt = float(context["entry_risk_usdt"])
+        enriched["net_r_multiple"] = float(trade["pnl"]) / risk_usdt if risk_usdt > 0 else None
     return enriched
 
 
@@ -209,6 +232,13 @@ def run_backtest(
                         active_context = {
                             "entry_timestamp": timestamp,
                             "entry_price": float(opened["entry_price"]),
+                            "stop_loss": float(proposal["stop_loss"]),
+                            "take_profit": float(proposal["take_profit"]),
+                            "entry_risk_usdt": float(opened["quantity"]) * (
+                                float(opened["entry_price"]) * (1 + cfg.fee_rate)
+                                - float(proposal["stop_loss"]) * (1 - cfg.slippage_rate)
+                                * (1 - cfg.fee_rate)
+                            ),
                             "entry_snapshot": dict(decision.snapshot),
                             "hold_bars": 0,
                             "max_favorable_excursion_pct": 0.0,
