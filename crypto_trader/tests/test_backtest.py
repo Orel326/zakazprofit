@@ -1,4 +1,4 @@
-from crypto_trader.backtest import run_backtest
+from crypto_trader.backtest import run_backtest, run_walk_forward
 from crypto_trader.paper import PaperConfig
 
 HOUR = 3_600_000
@@ -36,7 +36,6 @@ def test_backtest_requires_warmup_history():
         run_backtest("BTC/USDT", rows(59), HOUR)
 
 
-
 def test_backtest_analysis_receives_only_closed_prefix(monkeypatch):
     import crypto_trader.backtest as module
 
@@ -54,3 +53,47 @@ def test_backtest_analysis_receives_only_closed_prefix(monkeypatch):
     monkeypatch.setattr(module, "analyze_symbol", inspect_prefix)
     module.run_backtest("BTC/USDT", rows(), HOUR, PaperConfig())
     assert seen_lengths == list(range(60, 101))
+
+
+def test_backtest_warmup_does_not_create_pre_window_trades(monkeypatch):
+    import crypto_trader.backtest as module
+
+    seen_lengths = []
+
+    class Decision:
+        decision = "NO_TRADE"
+        proposal = None
+
+    def inspect_prefix(symbol, history):
+        seen_lengths.append(len(history))
+        return Decision()
+
+    monkeypatch.setattr(module, "analyze_symbol", inspect_prefix)
+    result = run_backtest("BTC/USDT", rows(), HOUR, start_index=70, end_index=90)
+    assert seen_lengths == list(range(71, 91))
+    assert result["data"]["warmup_candles"] == 70
+    assert result["data"]["candles"] == 20
+    assert len(result["equity_curve"]) == 20
+
+
+def test_walk_forward_uses_contiguous_non_overlapping_test_folds(monkeypatch):
+    import crypto_trader.backtest as module
+
+    seen_lengths = []
+
+    class Decision:
+        decision = "NO_TRADE"
+        proposal = None
+
+    def inspect_prefix(symbol, history):
+        seen_lengths.append(len(history))
+        return Decision()
+
+    monkeypatch.setattr(module, "analyze_symbol", inspect_prefix)
+    result = run_walk_forward("BTC/USDT", rows(), HOUR, folds=2)
+
+    assert result["fold_count"] == 2
+    assert result["total_test_candles"] == 40
+    assert [f["test_candles"] for f in result["folds"]] == [20, 20]
+    assert result["folds"][0]["to_timestamp_ms"] < result["folds"][1]["from_timestamp_ms"]
+    assert seen_lengths == list(range(61, 81)) + list(range(81, 101))
