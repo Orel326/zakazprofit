@@ -204,22 +204,27 @@ def run_backtest(
                 ).timestamp() * 1000)
                 if close_ms > opened_ms:
                     if active_context is not None:
-                        entry_price = float(active_context["entry_price"])
-                        high, low = float(candle[2]), float(candle[3])
                         active_context["hold_bars"] += 1
-                        active_context["max_favorable_excursion_pct"] = max(
-                            float(active_context["max_favorable_excursion_pct"]),
-                            (high / entry_price - 1) * 100,
-                        )
-                        active_context["max_adverse_excursion_pct"] = min(
-                            float(active_context["max_adverse_excursion_pct"]),
-                            (low / entry_price - 1) * 100,
-                        )
                     broker.process_candle(
                         symbol, timestamp, float(candle[2]), float(candle[3]),
                         open_price=float(candle[1]),
                     )
-                    if not broker.open_positions():
+                    if broker.open_positions():
+                        # Only count a candle's full high/low range if the
+                        # position survived it. Intrabar order is unknown on
+                        # an exit candle, so its extremes are excluded.
+                        if active_context is not None:
+                            entry_price = float(active_context["entry_price"])
+                            high, low = float(candle[2]), float(candle[3])
+                            active_context["max_favorable_excursion_pct"] = max(
+                                float(active_context["max_favorable_excursion_pct"]),
+                                (high / entry_price - 1) * 100,
+                            )
+                            active_context["max_adverse_excursion_pct"] = min(
+                                float(active_context["max_adverse_excursion_pct"]),
+                                (low / entry_price - 1) * 100,
+                            )
+                    else:
                         save_latest_close_context()
             elif index >= 59 and not broker.has_trade_activity(symbol, timestamp):
                 decision = analyze_symbol(symbol, rows[:index + 1])
@@ -292,7 +297,7 @@ def run_backtest(
             "fee_rate": cfg.fee_rate, "slippage_rate": cfg.slippage_rate,
             "terminal_liquidation": True,
             "decision_timing": "signal at candle close; exits start on next candle",
-            "excursion_measurement": "MFE/MAE use subsequent candle high/low only; entry candle excluded",
+            "excursion_measurement": "MFE/MAE use full high/low only on survived candles; entry and exit candles excluded",
         }
         return result
 
