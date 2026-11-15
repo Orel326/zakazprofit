@@ -30,19 +30,35 @@ def _ema(values: Sequence[float], period: int) -> float:
     return result
 
 
-def _rsi(closes: Sequence[float], period: int = 14) -> float:
+def _rsi(closes: Sequence[float], period: int = 14, method: str = "simple") -> float:
     if len(closes) <= period:
         raise ValueError(f"need more than {period} closes for RSI")
     changes = [b - a for a, b in zip(closes[:-1], closes[1:])]
-    gains = [max(change, 0.0) for change in changes[-period:]]
-    losses = [max(-change, 0.0) for change in changes[-period:]]
-    avg_gain, avg_loss = sum(gains) / period, sum(losses) / period
+    if method == "simple":
+        recent = changes[-period:]
+        gains = [max(change, 0.0) for change in recent]
+        losses = [max(-change, 0.0) for change in recent]
+        avg_gain, avg_loss = sum(gains) / period, sum(losses) / period
+    elif method == "wilder":
+        gains = [max(change, 0.0) for change in changes]
+        losses = [max(-change, 0.0) for change in changes]
+        avg_gain = sum(gains[:period]) / period
+        avg_loss = sum(losses[:period]) / period
+        for gain, loss in zip(gains[period:], losses[period:]):
+            avg_gain = ((period - 1) * avg_gain + gain) / period
+            avg_loss = ((period - 1) * avg_loss + loss) / period
+    else:
+        raise ValueError("RSI method must be 'simple' or 'wilder'")
     if avg_loss == 0:
         return 100.0 if avg_gain else 50.0
     return 100.0 - 100.0 / (1.0 + avg_gain / avg_loss)
 
 
-def analyze_candles(symbol: str, rows: Sequence[Sequence[float]]) -> MarketSnapshot:
+def analyze_candles(
+    symbol: str,
+    rows: Sequence[Sequence[float]],
+    rsi_method: str = "simple",
+) -> MarketSnapshot:
     """Rows are chronological OHLCV records: timestamp, open, high, low, close, volume."""
     if len(rows) < 60:
         raise ValueError("at least 60 closed candles are required")
@@ -52,7 +68,7 @@ def analyze_candles(symbol: str, rows: Sequence[Sequence[float]]) -> MarketSnaps
     if any(not isfinite(v) or v <= 0 for v in closes + highs + lows):
         raise ValueError("prices must be finite and positive")
     fast, slow = _ema(closes, 20), _ema(closes, 50)
-    rsi = _rsi(closes)
+    rsi = _rsi(closes, method=rsi_method)
     true_ranges = []
     for i in range(1, len(rows)):
         true_ranges.append(max(
