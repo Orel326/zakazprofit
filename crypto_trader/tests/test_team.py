@@ -52,7 +52,7 @@ def test_risk_manager_veto_cannot_be_overridden():
 def test_wilder_rsi_uses_recursive_smoothing_and_simple_remains_default():
     closes = [float(value) for value in
               (1, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 4)]
-    assert _rsi(closes, 14, "wilder") == pytest.approx(53.5714285714)
+    assert _rsi(closes, 14, "wilder") == pytest.approx(60.2040816327)
     assert _rsi(closes, 14, "simple") == pytest.approx(57.1428571429)
     with pytest.raises(ValueError, match="RSI method"):
         _rsi(closes, 14, "unknown")
