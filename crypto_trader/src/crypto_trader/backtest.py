@@ -120,7 +120,7 @@ def _attach_trade_context(trade: dict, context: dict | None) -> dict:
 
 
 def _entry_diagnostics(trades: list[dict]) -> dict:
-    """Group outcomes by legacy trend/RSI and independent entry features."""
+    """Group outcomes by trend, RSI, and independent entry features recorded at signal close."""
     legacy: dict[str, dict] = {}
     by_feature: dict[str, dict[str, dict]] = {}
     features = {
