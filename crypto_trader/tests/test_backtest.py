@@ -182,6 +182,9 @@ def test_backtest_records_entry_snapshot_and_post_entry_excursions(monkeypatch):
     assert trade["net_r_multiple"] is not None
     assert result["trade_diagnostics"]["by_exit_reason"]["end_of_backtest"]["average_net_r"] is not None
     assert "bullish|RSI 55-70" in result["entry_diagnostics"]
+    assert result["entry_diagnostics"]["by_feature"]["ema_spread_pct"]
+    assert result["entry_diagnostics"]["by_feature"]["distance_to_ema20_pct"]
+    assert result["entry_diagnostics"]["by_feature"]["signal_candle_return_pct"]
     assert result["execution_model"]["excursion_measurement"].startswith(
         "MFE/MAE use full high/low only on survived candles"
     )
