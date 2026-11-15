@@ -120,31 +120,53 @@ def _attach_trade_context(trade: dict, context: dict | None) -> dict:
 
 
 def _entry_diagnostics(trades: list[dict]) -> dict:
-    """Group realized outcomes by the market state recorded at entry."""
-    groups: dict[str, dict] = {}
-    for trade in trades:
-        snapshot = trade.get("entry_snapshot") or {}
-        trend = str(snapshot.get("trend", "unknown"))
-        rsi_bucket = _rsi_bucket(snapshot.get("rsi"))
-        key = f"{trend}|RSI {rsi_bucket}"
-        group = groups.setdefault(key, {
-            "trades": 0, "wins": 0, "net_pnl": 0.0,
-            "average_mfe_pct": [], "average_mae_pct": [],
-        })
+    """Group outcomes by legacy trend/RSI and independent entry features."""
+    legacy: dict[str, dict] = {}
+    by_feature: dict[str, dict[str, dict]] = {}
+    features = {
+        "ema_spread_pct": ([0.15, 0.30, 0.60], ["<0.15", "0.15-0.30", "0.30-0.60", ">=0.60"]),
+        "distance_to_ema20_pct": ([0.25, 0.50, 1.00], ["<0.25", "0.25-0.50", "0.50-1.00", ">=1.00"]),
+        "atr_pct": ([0.60, 1.00, 2.00, 3.00], ["<0.60", "0.60-1.00", "1.00-2.00", "2.00-3.00", ">=3.00"]),
+        "signal_candle_return_pct": ([-0.50, 0.0, 0.50, 1.00], ["<-0.50", "-0.50-0", "0-0.50", "0.50-1.00", ">=1.00"]),
+        "signal_candle_body_pct": ([-0.50, 0.0, 0.50, 1.00], ["<-0.50", "-0.50-0", "0-0.50", "0.50-1.00", ">=1.00"]),
+        "close_location_in_range": ([0.25, 0.50, 0.75], ["<0.25", "0.25-0.50", "0.50-0.75", ">=0.75"]),
+    }
+
+    def add(group: dict, trade: dict) -> None:
         pnl = float(trade["pnl"])
         group["trades"] += 1
         group["wins"] += int(pnl > 0)
         group["net_pnl"] += pnl
         if trade.get("max_favorable_excursion_pct") is not None:
-            group["average_mfe_pct"].append(float(trade["max_favorable_excursion_pct"]))
+            group["mfe"].append(float(trade["max_favorable_excursion_pct"]))
         if trade.get("max_adverse_excursion_pct") is not None:
-            group["average_mae_pct"].append(float(trade["max_adverse_excursion_pct"]))
-    for group in groups.values():
-        group["win_rate_pct"] = group["wins"] / group["trades"] * 100
-        for field in ("average_mfe_pct", "average_mae_pct"):
-            values = group[field]
-            group[field] = mean(values) if values else None
-    return groups
+            group["mae"].append(float(trade["max_adverse_excursion_pct"]))
+
+    for trade in trades:
+        snapshot = trade.get("entry_snapshot") or {}
+        key = f"{snapshot.get('trend', 'unknown')}|RSI {_rsi_bucket(snapshot.get('rsi'))}"
+        group = legacy.setdefault(key, {"trades": 0, "wins": 0, "net_pnl": 0.0, "mfe": [], "mae": []})
+        add(group, trade)
+        for feature, (bounds, labels) in features.items():
+            value = snapshot.get(feature)
+            if value is None:
+                continue
+            bucket = next((label for bound, label in zip(bounds, labels) if float(value) < bound), labels[-1])
+            bucket_group = by_feature.setdefault(feature, {}).setdefault(
+                bucket, {"trades": 0, "wins": 0, "net_pnl": 0.0, "mfe": [], "mae": []}
+            )
+            add(bucket_group, trade)
+
+    def finish(groups: dict) -> None:
+        for group in groups.values():
+            group["win_rate_pct"] = group["wins"] / group["trades"] * 100
+            group["average_mfe_pct"] = mean(group.pop("mfe")) if group["mfe"] else None
+            group["average_mae_pct"] = mean(group.pop("mae")) if group["mae"] else None
+
+    finish(legacy)
+    for groups in by_feature.values():
+        finish(groups)
+    return {**legacy, "by_feature": by_feature}
 
 
 def run_backtest(
