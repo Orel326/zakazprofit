@@ -1,0 +1,30 @@
+name: Crypto trader tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "crypto_trader/**"
+      - ".github/workflows/crypto-trader-tests.yml"
+  pull_request:
+    paths:
+      - "crypto_trader/**"
+      - ".github/workflows/crypto-trader-tests.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crypto_trader
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: crypto_trader/pyproject.toml
+      - name: Install project and test dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Run test suite
+        run: python -m pytest
