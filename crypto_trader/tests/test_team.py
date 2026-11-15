@@ -1,3 +1,6 @@
+import pytest
+
+from crypto_trader.analysis import _rsi, analyze_candles
 from crypto_trader.team import analyze_symbol
 
 
@@ -44,3 +47,21 @@ def test_risk_manager_veto_cannot_be_overridden():
     risk = next(r for r in result.reports if r["agent"] == "risk_manager")
     if risk["status"] == "veto":
         assert result.decision == "NO_TRADE"
+
+
+def test_wilder_rsi_uses_recursive_smoothing_and_simple_remains_default():
+    closes = [float(value) for value in
+              (1, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 4)]
+    assert _rsi(closes, 14, "wilder") == pytest.approx(53.5714285714)
+    assert _rsi(closes, 14, "simple") == pytest.approx(57.1428571429)
+    with pytest.raises(ValueError, match="RSI method"):
+        _rsi(closes, 14, "unknown")
+
+
+def test_analyze_candles_can_compare_rsi_methods_without_changing_default():
+    rows = make_rows("up")
+    default = analyze_candles("BTC/USDT", rows)
+    explicit_simple = analyze_candles("BTC/USDT", rows, rsi_method="simple")
+    wilder = analyze_candles("BTC/USDT", rows, rsi_method="wilder")
+    assert default.rsi == explicit_simple.rsi
+    assert wilder.rsi != default.rsi
