@@ -258,6 +258,23 @@ def run_backtest(
                             float(proposal["stop_loss"]), float(proposal["take_profit"]),
                             timestamp,
                         )
+                        entry_snapshot = dict(decision.snapshot)
+                        signal_open, signal_high, signal_low, signal_close = map(
+                            float, (candle[1], candle[2], candle[3], candle[4])
+                        )
+                        previous_close = float(rows[index - 1][4]) if index > 0 else signal_open
+                        ema_fast = float(entry_snapshot["ema_fast"])
+                        ema_slow = float(entry_snapshot["ema_slow"])
+                        entry_snapshot.update({
+                            "ema_spread_pct": (ema_fast / ema_slow - 1) * 100 if ema_slow else None,
+                            "distance_to_ema20_pct": (signal_close / ema_fast - 1) * 100 if ema_fast else None,
+                            "signal_candle_return_pct": (signal_close / previous_close - 1) * 100 if previous_close else None,
+                            "signal_candle_body_pct": (signal_close / signal_open - 1) * 100 if signal_open else None,
+                            "close_location_in_range": (
+                                (signal_close - signal_low) / (signal_high - signal_low)
+                                if signal_high > signal_low else 0.5
+                            ),
+                        })
                         active_context = {
                             "entry_timestamp": timestamp,
                             "entry_price": float(opened["entry_price"]),
@@ -268,7 +285,7 @@ def run_backtest(
                                 - float(proposal["stop_loss"]) * (1 - cfg.slippage_rate)
                                 * (1 - cfg.fee_rate)
                             ),
-                            "entry_snapshot": dict(decision.snapshot),
+                            "entry_snapshot": entry_snapshot,
                             "hold_bars": 0,
                             "max_favorable_excursion_pct": 0.0,
                             "max_adverse_excursion_pct": 0.0,
