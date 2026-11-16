@@ -53,6 +53,11 @@ def _eligible_universe(data, i, selection_size, correlation_limit, held=()):
             scores.append((-momentum,symbol))
     # Existing positions consume diversification capacity even if they are no
     # longer in the top momentum list. Never stack correlated new entries.
+    # Held positions count toward the requested portfolio size. Otherwise a
+    # top-3 selection can quietly expand to four open holdings over time.
+    slots = max(0, selection_size - len(held))
+    if slots == 0:
+        return frozenset()
     selected = []
     for _,symbol in sorted(scores):
         if symbol in held:
@@ -60,7 +65,7 @@ def _eligible_universe(data, i, selection_size, correlation_limit, held=()):
         if all(_correlation(data[symbol],data[other],i) < correlation_limit
                for other in (*selected, *sorted(held))):
             selected.append(symbol)
-            if len(selected) >= selection_size:
+            if len(selected) >= slots:
                 break
     return frozenset(selected)
 
