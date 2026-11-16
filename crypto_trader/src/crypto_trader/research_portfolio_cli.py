@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from .config import Settings
 from .exchange import TIMEFRAME_MS, create_exchange, fetch_closed_ohlcv
-from .research_portfolio import UNIVERSE, RESEARCH_CONFIG, compare_portfolios
+from .research_portfolio import UNIVERSE, RESEARCH_CONFIG, compare_portfolios, portfolio_backtest
 
 def main():
     parser = argparse.ArgumentParser(description="Research-only portfolio backtest; no orders")
@@ -45,6 +45,17 @@ def main():
         comparisons = compare_portfolios(data,TIMEFRAME_MS[args.timeframe],folds=args.folds)
     except ValueError as exc:
         comparisons = {"status":"rejected","reason":str(exc)}
+    dynamic = {}
+    if all(s in data for s in UNIVERSE):
+        for count in (3,5):
+            try:
+                dynamic[str(count)] = portfolio_backtest(
+                    {s:data[s] for s in UNIVERSE}, TIMEFRAME_MS[args.timeframe],
+                    selection_size=count)
+            except ValueError as exc:
+                dynamic[str(count)] = {"status":"rejected","reason":str(exc)}
+    else:
+        dynamic = {"status":"rejected","reason":"incomplete 10-symbol dataset"}
     print(json.dumps({
         "_metadata":{
             "created_at_utc":datetime.now(timezone.utc).isoformat(),
@@ -56,6 +67,7 @@ def main():
         },
         "candles_by_symbol":{s:len(r) for s,r in data.items()},
         "rejected_symbols":rejected,"portfolios":comparisons,
+        "dynamic_top_3_5":dynamic,
     },ensure_ascii=False,indent=2,allow_nan=False))
     return 0
 
