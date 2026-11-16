@@ -111,3 +111,43 @@ def test_dynamic_filter_changes_actual_executions(monkeypatch):
     assert dynamic["trades_by_symbol"]["ETH/USDT"] == 0
     assert dynamic["trades_by_symbol"]["BTC/USDT"] > 0
     assert dynamic["closed_trades"] < fixed["closed_trades"]
+
+def test_next_open_entry_and_same_candle_stop_are_conservative(monkeypatch):
+    from crypto_trader.research_portfolio import STRATEGIES
+    from crypto_trader.research_strategies import Signal
+    data=dataset(("BTC/USDT",),count=225)
+    # Signal only on candle 220. The next candle gaps down but stays
+    # between stop and target; intrabar low then hits stop.
+    data["BTC/USDT"][220][1:5]=[100.,101.,99.,100.]
+    data["BTC/USDT"][221][1:5]=[95.,96.,89.,93.]
+    called=[]
+    def once(rows):
+        if len(rows)==221:
+            return Signal("ema_adx",100.,90.,120.)
+        return None
+    monkeypatch.setitem(STRATEGIES,"ema_adx",once)
+    from crypto_trader import research_portfolio as rp
+    original_open=rp.PaperBroker.open_position
+    def spy_open(self,symbol,market_price,stop_loss,take_profit,occurred_at=None):
+        called.append((symbol,market_price,occurred_at))
+        return original_open(self,symbol,market_price,stop_loss,take_profit,occurred_at)
+    monkeypatch.setattr(rp.PaperBroker,"open_position",spy_open)
+    report=portfolio_backtest(data,HOUR)
+    assert len(called)==1
+    assert called[0][1]==95.  # next open, NOT signal close 100
+    assert report["closed_trades"]==1
+    assert report["return_pct"]<0
+
+def test_last_candle_signal_cannot_fill_without_next_open(monkeypatch):
+    from crypto_trader.research_portfolio import STRATEGIES
+    from crypto_trader.research_strategies import Signal
+    data=dataset(("BTC/USDT",),count=225)
+    def only_last(rows):
+        if len(rows)==225:
+            price=float(rows[-1][4])
+            return Signal("ema_adx",price,price*.9,price*1.1)
+        return None
+    monkeypatch.setitem(STRATEGIES,"ema_adx",only_last)
+    report=portfolio_backtest(data,HOUR)
+    assert report["closed_trades"]==0
+    assert report["return_pct"]==0
