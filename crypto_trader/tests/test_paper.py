@@ -148,3 +148,27 @@ def test_combined_open_risk_uses_cost_adjusted_stop_loss(tmp_path):
         paper.open_position("ETH/USDT", 100, 95, 110,
                             "2026-11-01T10:00:00+00:00")
     assert len(paper.open_positions()) == 1
+
+
+
+def test_daily_loss_limit_blocks_new_entries_on_marked_equity_drawdown(tmp_path):
+    paper = broker(tmp_path, daily_loss_limit=0.02)
+    paper.open_position("BTC/USDT", 100, 95, 110,
+                        "2026-11-01T10:00:00+00:00")
+    # Mark-to-market equity includes the open position's unrealized loss.
+    paper.record_equity({"BTC/USDT": 90.0},
+                        "2026-11-01T11:00:00+00:00")
+    with pytest.raises(ValueError, match="daily loss limit reached"):
+        paper.open_position("ETH/USDT", 100, 95, 110,
+                            "2026-11-01T12:00:00+00:00")
+    assert len(paper.open_positions()) == 1
+
+
+def test_daily_loss_limit_uses_utc_day_across_timezone_offsets(tmp_path):
+    paper = broker(tmp_path, daily_loss_limit=0.02)
+    paper.open_position("BTC/USDT", 100, 95, 110,
+                        "2026-11-01T23:30:00-02:00")
+    # This timestamp is still Nov 2 in UTC and belongs to the next risk day.
+    paper.record_equity({"BTC/USDT": 100.0},
+                        "2026-11-02T02:00:00+00:00")
+    assert paper.open_positions()
