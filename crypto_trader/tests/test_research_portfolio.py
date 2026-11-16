@@ -213,3 +213,25 @@ def test_dynamic_selection_can_choose_uncorrelated_new_symbol_with_holding():
         row[1:5]=[price,price+1,price-1,price]
     selected=_eligible_universe(data,230,1,0.85,held={"BTC/USDT"})
     assert selected==frozenset({"ETH/USDT"})
+
+
+def test_dynamic_selection_counts_existing_holdings_against_size(monkeypatch):
+    from crypto_trader import research_portfolio as rp
+    data = dataset(UNIVERSE[:5], count=250)
+    # Isolate capacity accounting from the correlation constraint.
+    monkeypatch.setattr(rp, "_correlation", lambda *args, **kwargs: 0.0)
+    selected = rp._eligible_universe(data, 230, 3, 0.85,
+                                     held={"BTC/USDT", "ETH/USDT"})
+    assert len(selected) == 1
+    assert not selected.intersection({"BTC/USDT", "ETH/USDT"})
+    assert len(selected) + 2 == 3
+
+
+def test_dynamic_selection_at_capacity_does_not_add_assets(monkeypatch):
+    from crypto_trader import research_portfolio as rp
+    data = dataset(UNIVERSE[:5], count=250)
+    monkeypatch.setattr(rp, "_correlation", lambda *args, **kwargs: 0.0)
+    assert rp._eligible_universe(data, 230, 3, 0.85,
+                                 held=set(UNIVERSE[:3])) == frozenset()
+    assert rp._eligible_universe(data, 230, 3, 0.85,
+                                 held=set(UNIVERSE[:4])) == frozenset()
