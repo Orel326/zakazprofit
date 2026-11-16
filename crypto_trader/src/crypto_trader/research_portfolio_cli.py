@@ -3,7 +3,7 @@ import argparse
 import hashlib
 import json
 import os
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 
 from .config import Settings
@@ -70,6 +70,32 @@ def main():
                 dynamic[str(count)] = {"status":"rejected","reason":str(exc)}
     else:
         dynamic = {"status":"rejected","reason":"incomplete 10-symbol dataset"}
+    # A predeclared last-quarter holdout, never used for parameter selection.
+    # Stress execution costs without changing strategy thresholds.
+    diagnostics = {}
+    if all(s in data for s in UNIVERSE):
+        subset = {s:data[s] for s in UNIVERSE}
+        length = len(next(iter(subset.values())))
+        boundary = 220 + (length-220)*3//4
+        expensive = replace(RESEARCH_CONFIG,
+                            fee_rate=RESEARCH_CONFIG.fee_rate*2,
+                            slippage_rate=RESEARCH_CONFIG.slippage_rate*2)
+        for label, kwargs in (
+            ("fixed_10", {}),
+            ("dynamic_3", {"selection_size":3}),
+            ("dynamic_5", {"selection_size":5}),
+        ):
+            try:
+                diagnostics[label] = {
+                    "last_quarter_holdout":portfolio_backtest(
+                        subset,TIMEFRAME_MS[args.timeframe],
+                        start_index=boundary,**kwargs),
+                    "double_cost_full_period":portfolio_backtest(
+                        subset,TIMEFRAME_MS[args.timeframe],
+                        config=expensive,**kwargs),
+                }
+            except ValueError as exc:
+                diagnostics[label] = {"status":"rejected","reason":str(exc)}
     print(json.dumps({
         "_metadata":{
             "created_at_utc":datetime.now(timezone.utc).isoformat(),
@@ -82,6 +108,7 @@ def main():
         "candles_by_symbol":{s:len(r) for s,r in data.items()},
         "rejected_symbols":rejected,"portfolios":comparisons,
         "dynamic_top_3_5":dynamic,
+        "predeclared_holdout_and_cost_stress":diagnostics,
     },ensure_ascii=False,indent=2,allow_nan=False))
     return 0
 
