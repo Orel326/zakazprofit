@@ -70,9 +70,11 @@ class PaperConfig:
 class PaperBroker:
     """Long-only, spot-style simulator with persistent account and trade journal."""
 
-    def __init__(self, database_path: Path, config: PaperConfig | None = None):
+    def __init__(self, database_path: Path, config: PaperConfig | None = None,
+                 allowed_symbols: frozenset[str] | None = None):
         self.database_path = Path(database_path)
         self.config = config or PaperConfig()
+        self.allowed_symbols = ALLOWED_SYMBOLS if allowed_symbols is None else frozenset(allowed_symbols)
         if not math.isfinite(self.config.initial_balance) or self.config.initial_balance <= 0:
             raise ValueError("initial_balance must be finite and positive")
         if not math.isfinite(self.config.fee_rate) or not 0 <= self.config.fee_rate < 0.1:
@@ -193,7 +195,7 @@ class PaperBroker:
         take_profit: float,
         occurred_at: str | None = None,
     ) -> dict[str, Any]:
-        if symbol not in ALLOWED_SYMBOLS:
+        if symbol not in self.allowed_symbols:
             raise ValueError(f"unsupported symbol: {symbol}")
         self._validate_price(market_price)
         self._validate_price(stop_loss)
