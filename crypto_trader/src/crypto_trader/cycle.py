@@ -239,6 +239,29 @@ def run_cycle(exchange, settings: Settings, broker: PaperBroker,
                         "proposal": decision.proposal, "opened": opened,
                         "execution_rejected": rejection, "reports": decision.reports,
                     })
+            # Refresh the account-wide daily drawdown guard after every candle.
+            # Other open positions use their latest stored close (or entry mark if
+            # no market mark exists yet), so a loss on one symbol can block a
+            # subsequent entry on another symbol in the same catch-up cycle.
+            open_now = broker.open_positions()
+            risk_marks: dict[str, float] = {}
+            for open_position in open_now:
+                open_symbol = str(open_position["symbol"])
+                if open_symbol == symbol:
+                    risk_marks[open_symbol] = float(candle[4])
+                else:
+                    with connect(settings.database_path) as db:
+                        mark_row = db.execute(
+                            """SELECT close FROM candles
+                               WHERE exchange=? AND symbol=? AND timeframe=?
+                               ORDER BY timestamp_ms DESC LIMIT 1""",
+                            (settings.exchange_id, open_symbol, timeframe),
+                        ).fetchone()
+                    risk_marks[open_symbol] = (
+                        float(mark_row[0]) if mark_row else float(open_position["entry_price"])
+                    )
+            broker.record_equity(risk_marks, timestamp)
+
             # Advance state only after this candle has been fully handled.
             _save_processed(settings.database_path, symbol, ts, settings.exchange_id, timeframe)
 
