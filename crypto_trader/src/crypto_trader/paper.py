@@ -146,6 +146,26 @@ class PaperBroker:
             )
         return bool(breached)
 
+    def _daily_limit_reached(
+        self, db: sqlite3.Connection, timestamp: str, equity: float
+    ) -> bool:
+        day = self._utc_day(timestamp)
+        row = db.execute(
+            "SELECT start_equity, latest_equity, breached "
+            "FROM paper_daily_risk WHERE utc_day=?",
+            (day,),
+        ).fetchone()
+        if row is None:
+            return self._update_daily_risk(db, timestamp, equity)
+        threshold = float(row["start_equity"]) * (1 - self.config.daily_loss_limit)
+        breached = bool(row["breached"]) or float(row["latest_equity"]) <= threshold or equity <= threshold
+        if breached and not bool(row["breached"]):
+            db.execute(
+                "UPDATE paper_daily_risk SET breached=1, updated_at=? WHERE utc_day=?",
+                (timestamp, day),
+            )
+        return breached
+
     def account(self) -> dict[str, float]:
         with self._connect() as db:
             row = db.execute("SELECT * FROM paper_account WHERE id=1").fetchone()
@@ -186,7 +206,7 @@ class PaperBroker:
             equity = cash + sum(float(p["quantity"]) * float(p["entry_price"]) for p in positions)
             if equity <= 0:
                 raise ValueError("account equity is not positive")
-            if self._update_daily_risk(db, timestamp, equity):
+            if self._daily_limit_reached(db, timestamp, equity):
                 raise ValueError("daily loss limit reached; new entries are blocked until the next UTC day")
             # Size against the estimated net loss at the stop, including
             # entry/exit fees and adverse slippage on both sides.
