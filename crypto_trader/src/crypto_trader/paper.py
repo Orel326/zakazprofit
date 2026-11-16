@@ -108,6 +108,44 @@ class PaperBroker:
         if not math.isfinite(price) or price <= 0:
             raise ValueError("price must be finite and positive")
 
+    @staticmethod
+    def _utc_day(timestamp: str) -> str:
+        try:
+            parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("occurred_at must be a valid ISO-8601 timestamp") from exc
+        if parsed.tzinfo is None:
+            raise ValueError("occurred_at must include a timezone")
+        return parsed.astimezone(timezone.utc).date().isoformat()
+
+    def _update_daily_risk(
+        self, db: sqlite3.Connection, timestamp: str, equity: float
+    ) -> bool:
+        day = self._utc_day(timestamp)
+        row = db.execute(
+            "SELECT start_equity, breached FROM paper_daily_risk WHERE utc_day=?",
+            (day,),
+        ).fetchone()
+        if row is None:
+            start_equity = equity
+            breached = int(equity <= 0)
+            db.execute(
+                """INSERT INTO paper_daily_risk
+                   (utc_day,start_equity,latest_equity,breached,updated_at)
+                   VALUES(?,?,?,?,?)""",
+                (day, start_equity, equity, breached, timestamp),
+            )
+        else:
+            start_equity = float(row["start_equity"])
+            breached = int(bool(row["breached"]) or
+                           equity <= start_equity * (1 - self.config.daily_loss_limit))
+            db.execute(
+                """UPDATE paper_daily_risk
+                   SET latest_equity=?, breached=?, updated_at=? WHERE utc_day=?""",
+                (equity, breached, timestamp, day),
+            )
+        return bool(breached)
+
     def account(self) -> dict[str, float]:
         with self._connect() as db:
             row = db.execute("SELECT * FROM paper_account WHERE id=1").fetchone()
@@ -148,14 +186,8 @@ class PaperBroker:
             equity = cash + sum(float(p["quantity"]) * float(p["entry_price"]) for p in positions)
             if equity <= 0:
                 raise ValueError("account equity is not positive")
-            today = timestamp[:10]
-            daily = db.execute(
-                "SELECT COALESCE(SUM(pnl), 0) AS pnl FROM paper_trades "
-                "WHERE side='CLOSE' AND substr(occurred_at,1,10)=?",
-                (today,),
-            ).fetchone()
-            if float(daily["pnl"]) <= -self.config.initial_balance * self.config.daily_loss_limit:
-                raise ValueError("daily loss limit reached")
+            if self._update_daily_risk(db, timestamp, equity):
+                raise ValueError("daily loss limit reached; new entries are blocked until the next UTC day")
             # Size against the estimated net loss at the stop, including
             # entry/exit fees and adverse slippage on both sides.
             stop_fill = stop_loss * (1 - self.config.slippage_rate)
@@ -232,6 +264,16 @@ class PaperBroker:
                 (symbol, quantity, fill, exit_fee, pnl, reason, timestamp),
             )
             db.execute("DELETE FROM paper_positions WHERE symbol=?", (symbol,))
+            remaining = db.execute(
+                "SELECT quantity, entry_price FROM paper_positions"
+            ).fetchall()
+            marked_equity = float(db.execute(
+                "SELECT cash FROM paper_account WHERE id=1"
+            ).fetchone()["cash"]) + sum(
+                float(item["quantity"]) * float(item["entry_price"])
+                for item in remaining
+            )
+            self._update_daily_risk(db, timestamp, marked_equity)
         return {"symbol": symbol, "quantity": quantity, "exit_price": fill,
                 "exit_fee": exit_fee, "net_pnl": pnl, "reason": reason}
 
@@ -282,9 +324,11 @@ class PaperBroker:
                 value += float(position["quantity"]) * prices[symbol]
             cash = float(account["cash"])
             equity = cash + value
+            timestamp = occurred_at or self._now()
+            self._update_daily_risk(db, timestamp, equity)
             db.execute(
                 "INSERT INTO paper_equity (cash,position_value,equity,occurred_at) VALUES (?,?,?,?)",
-                (cash, value, equity, occurred_at or self._now()),
+                (cash, value, equity, timestamp),
             )
         return {"cash": cash, "position_value": value, "equity": equity}
 
