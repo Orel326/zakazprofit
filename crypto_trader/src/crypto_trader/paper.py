@@ -46,6 +46,13 @@ CREATE TABLE IF NOT EXISTS paper_equity (
     equity REAL NOT NULL,
     occurred_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS paper_daily_risk (
+    utc_day TEXT PRIMARY KEY,
+    start_equity REAL NOT NULL,
+    latest_equity REAL NOT NULL,
+    breached INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
 """
 
 
