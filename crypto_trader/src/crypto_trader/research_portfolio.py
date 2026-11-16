@@ -1,6 +1,6 @@
 """Research-only multi-asset portfolio backtest, sharing one cash account.
 
-Every timestamp is processed synchronously: exits first, then ranked entries.
+Every timestamp is processed synchronously: pending entries fill at the NEXT open.
 Signals see only closed candles. No real orders, no leverage, no optimization.
 """
 from __future__ import annotations
@@ -86,19 +86,33 @@ def portfolio_backtest(data, timeframe_ms, *, strategy="ema_adx",
         broker = PaperBroker(Path(directory)/"paper.sqlite3", config,
                              allowed_symbols=frozenset(symbols))
         equity_curve = []
+        pending = []  # (symbol, signal) decided at the previous closed candle
         for i in range(start_index,end):
             stamp = datetime.fromtimestamp(
                 (int(data[symbols[0]][i][0])+timeframe_ms)/1000, timezone.utc
             ).isoformat()
-            # Existing positions are eligible for exit from the next candle only.
+            # Execute only signals decided at the PREVIOUS candle close.
+            # Gap-up entries that invalidate the original stop/target are skipped.
+            for symbol, signal in pending:
+                entry_open = float(data[symbol][i][1])
+                if not (signal.stop_loss < entry_open < signal.take_profit):
+                    continue
+                try:
+                    broker.open_position(symbol, entry_open,
+                                         signal.stop_loss, signal.take_profit, stamp)
+                except ValueError:
+                    continue
+            pending = []
+            # Apply this candle's OHLC stops/targets, including for new entries.
+            # If both levels touch, PaperBroker assumes the adverse stop first.
             for p in broker.open_positions():
                 symbol = p["symbol"]
                 row = data[symbol][i]
-                if datetime.fromisoformat(p["opened_at"]) < datetime.fromisoformat(stamp):
-                    broker.process_candle(symbol, stamp, float(row[2]), float(row[3]),
-                                          open_price=float(row[1]))
-            # Rank competing signals before any entry; fixed tie-breaker.
-            if i+1 >= WARMUP[strategy]:
+                broker.process_candle(symbol, stamp, float(row[2]), float(row[3]),
+                                      open_price=float(row[1]))
+            # Compute next candle's orders only AFTER the current candle closes.
+            # No new order is filled on this signal candle.
+            if i+1 >= WARMUP[strategy] and i+1 < end:
                 held = {p["symbol"] for p in broker.open_positions()}
                 eligible = (frozenset(symbols) if selection_size is None
                             else _eligible_universe(data, i, selection_size, correlation_limit))
@@ -109,15 +123,8 @@ def portfolio_backtest(data, timeframe_ms, *, strategy="ema_adx",
                     signal = STRATEGIES[strategy](data[symbol][:i+1])
                     if signal:
                         candidates.append((-_rank(signal), symbol, signal))
-                for _,symbol,signal in sorted(candidates):
-                    if len(broker.open_positions()) >= config.max_open_positions:
-                        break
-                    try:
-                        broker.open_position(symbol, signal.reference_price,
-                                             signal.stop_loss, signal.take_profit, stamp)
-                    except ValueError:
-                        # Cash, combined risk, and daily guard can block entries.
-                        continue
+                # Risk/cash checks happen at the actual next-open fill.
+                pending = [(symbol,signal) for _,symbol,signal in sorted(candidates)]
             marks = {p["symbol"]: float(data[p["symbol"]][i][4])
                      for p in broker.open_positions()}
             equity_curve.append(broker.record_equity(marks,stamp)["equity"])
@@ -139,6 +146,7 @@ def portfolio_backtest(data, timeframe_ms, *, strategy="ema_adx",
         return {
             "symbols": list(symbols), "strategy": strategy,
             "selection_size": selection_size, "correlation_limit": correlation_limit,
+            "execution_model": "signal at candle close; fill at next open; same-candle adverse stop priority",
             "return_pct": 100*(equity_curve[-1]/config.initial_balance-1),
             "ending_equity": equity_curve[-1],
             "max_drawdown_pct": 100*dd,
