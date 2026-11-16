@@ -1,0 +1,43 @@
+name: Crypto trader strategy research
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - crypto-trader-strategy-research
+    paths:
+      - "crypto_trader/src/crypto_trader/research_*.py"
+      - "crypto_trader/tests/test_research_*.py"
+      - ".github/workflows/crypto-trader-strategy-research.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: crypto_trader
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: crypto_trader/pyproject.toml
+      - name: Install and test
+        run: |
+          python -m pip install ".[dev]"
+          python -m pytest -q tests/test_research_strategies.py tests/test_research_backtest.py
+      - name: Research BTC and ETH on public 365-day candles
+        run: python -m crypto_trader.research_cli --days 365 --timeframe 1h --folds 4 > strategy-research-report.json
+      - name: Upload comparison
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crypto-strategy-research-report
+          path: crypto_trader/strategy-research-report.json
+          retention-days: 14
+          if-no-files-found: warn
