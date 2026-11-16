@@ -70,3 +70,25 @@ def test_dynamic_selection_runs_without_future_prices():
 def test_dynamic_settings_are_validated():
     with pytest.raises(ValueError,match="dynamic selection"):
         portfolio_backtest(dataset(),HOUR,selection_size=0)
+
+def test_dynamic_selection_does_not_use_future_candles():
+    from crypto_trader.research_portfolio import _eligible_universe
+    data=dataset(UNIVERSE[:5],count=250)
+    before=_eligible_universe(data,230,3,0.85)
+    # Large future price moves cannot affect decisions at candle 230.
+    for symbol in data:
+        for i in range(231,250):
+            data[symbol][i][4] *= (1.5 if symbol=="BTC/USDT" else .5)
+    after=_eligible_universe(data,230,3,0.85)
+    assert before==after
+
+def test_portfolio_fold_does_not_depend_on_future_data():
+    data=dataset(UNIVERSE[:2],count=260)
+    first=portfolio_backtest(data,HOUR,start_index=220,end_index=240)
+    # Alter future candles only; earlier fold must be unchanged.
+    for rows in data.values():
+        for i in range(240,260):
+            rows[i][4]=rows[i][1]
+    second=portfolio_backtest(data,HOUR,start_index=220,end_index=240)
+    assert first["ending_equity"]==second["ending_equity"]
+    assert first["closed_trades"]==second["closed_trades"]
