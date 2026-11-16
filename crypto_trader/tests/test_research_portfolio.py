@@ -167,7 +167,7 @@ def test_portfolio_caps_simultaneous_positions_and_combined_risk(monkeypatch):
     def audited(self,symbol,market_price,stop_loss,take_profit,occurred_at=None):
         result=original(self,symbol,market_price,stop_loss,take_profit,occurred_at)
         positions=self.open_positions()
-        observed.append((len(positions),sum(
+        observed.append((len(positions),self.account()["equity_at_entry_marks"],sum(
             p["quantity"]*(p["entry_price"]*(1+self.config.fee_rate)
             -p["stop_loss"]*(1-self.config.slippage_rate)*(1-self.config.fee_rate))
             for p in positions)))
@@ -175,7 +175,7 @@ def test_portfolio_caps_simultaneous_positions_and_combined_risk(monkeypatch):
     monkeypatch.setattr(rp.PaperBroker,"open_position",audited)
     portfolio_backtest(data,HOUR)
     assert observed
-    assert all(count<=RESEARCH_CONFIG.max_open_positions for count,_ in observed)
+    assert all(count<=RESEARCH_CONFIG.max_open_positions for count,_,_ in observed)
     assert all(risk<=RESEARCH_CONFIG.initial_balance*
                RESEARCH_CONFIG.max_total_open_risk+1e-7 for _,risk in observed)
 
