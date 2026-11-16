@@ -152,3 +152,46 @@ def test_last_candle_signal_cannot_fill_without_next_open(monkeypatch):
     report=portfolio_backtest(data,HOUR)
     assert report["closed_trades"]==0
     assert report["return_pct"]==0
+
+def test_portfolio_caps_simultaneous_positions_and_combined_risk(monkeypatch):
+    from crypto_trader.research_portfolio import STRATEGIES
+    from crypto_trader.research_strategies import Signal
+    from crypto_trader import research_portfolio as rp
+    data=dataset(UNIVERSE,count=225)
+    def signal_every_close(rows):
+        price=float(rows[-1][4])
+        return Signal("ema_adx",price,price*.95,price*1.1)
+    monkeypatch.setitem(STRATEGIES,"ema_adx",signal_every_close)
+    observed=[]
+    original=rp.PaperBroker.open_position
+    def audited(self,symbol,market_price,stop_loss,take_profit,occurred_at=None):
+        result=original(self,symbol,market_price,stop_loss,take_profit,occurred_at)
+        positions=self.open_positions()
+        observed.append((len(positions),sum(
+            p["quantity"]*(p["entry_price"]*(1+self.config.fee_rate)
+            -p["stop_loss"]*(1-self.config.slippage_rate)*(1-self.config.fee_rate))
+            for p in positions)))
+        return result
+    monkeypatch.setattr(rp.PaperBroker,"open_position",audited)
+    portfolio_backtest(data,HOUR)
+    assert observed
+    assert all(count<=RESEARCH_CONFIG.max_open_positions for count,_ in observed)
+    assert all(risk<=RESEARCH_CONFIG.initial_balance*
+               RESEARCH_CONFIG.max_total_open_risk+1e-7 for _,risk in observed)
+
+def test_dynamic_evaluation_window_ignores_future_prices(monkeypatch):
+    from crypto_trader.research_portfolio import STRATEGIES
+    from crypto_trader.research_strategies import Signal
+    data=dataset(UNIVERSE[:5],count=260)
+    def deterministic_signal(rows):
+        price=float(rows[-1][4])
+        return Signal("ema_adx",price,price*.95,price*1.1)
+    monkeypatch.setitem(STRATEGIES,"ema_adx",deterministic_signal)
+    first=portfolio_backtest(data,HOUR,selection_size=3,
+                             start_index=220,end_index=240)
+    for rows in data.values():
+        for i in range(240,260):
+            rows[i][4]=rows[i][1]
+    second=portfolio_backtest(data,HOUR,selection_size=3,
+                              start_index=220,end_index=240)
+    assert first==second
