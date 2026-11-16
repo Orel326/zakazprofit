@@ -37,7 +37,7 @@ def test_missing_market_is_rejected_not_silently_substituted():
 def test_misaligned_timestamps_are_rejected():
     data=dataset()
     data["ETH/USDT"][5][0]+=1
-    with pytest.raises(ValueError,match="identical candle timestamps"):
+    with pytest.raises(ValueError,match="invalid/gapped candles|identical candle timestamps"):
         portfolio_backtest(data,HOUR)
 
 def test_research_symbol_allowlist_is_opt_in(tmp_path):
