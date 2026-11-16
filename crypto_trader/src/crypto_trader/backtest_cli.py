@@ -87,13 +87,13 @@ def main() -> int:
         dataset_fingerprints = {}
         for symbol in settings.symbols:
             candles = fetch_closed_ohlcv(exchange, symbol, args.timeframe, since, now)
+            if args.candles:
+                candles = candles[-args.candles:]
             canonical_data = json.dumps(
                 [[int(row[0]), *[float(value) for value in row[1:6]]] for row in candles],
                 separators=(",", ":"), allow_nan=False,
             ).encode("utf-8")
             dataset_fingerprints[symbol] = hashlib.sha256(canonical_data).hexdigest()
-            if args.candles:
-                candles = candles[-args.candles:]
             try:
                 config = PaperConfig()
                 simple = _run_rsi_variant(
