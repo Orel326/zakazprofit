@@ -6,7 +6,6 @@ Signals see only closed candles. No real orders, no leverage, no optimization.
 from __future__ import annotations
 
 import tempfile
-from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -101,9 +100,11 @@ def portfolio_backtest(data, timeframe_ms, *, strategy="ema_adx",
             # Rank competing signals before any entry; fixed tie-breaker.
             if i+1 >= WARMUP[strategy]:
                 held = {p["symbol"] for p in broker.open_positions()}
+                eligible = (frozenset(symbols) if selection_size is None
+                            else _eligible_universe(data, i, selection_size, correlation_limit))
                 candidates = []
                 for symbol in symbols:
-                    if symbol in held:
+                    if symbol not in eligible or symbol in held:
                         continue
                     signal = STRATEGIES[strategy](data[symbol][:i+1])
                     if signal:
