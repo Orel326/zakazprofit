@@ -176,8 +176,8 @@ def test_portfolio_caps_simultaneous_positions_and_combined_risk(monkeypatch):
     portfolio_backtest(data,HOUR)
     assert observed
     assert all(count<=RESEARCH_CONFIG.max_open_positions for count,_,_ in observed)
-    assert all(risk<=RESEARCH_CONFIG.initial_balance*
-               RESEARCH_CONFIG.max_total_open_risk+1e-7 for _,risk in observed)
+    assert all(risk<=equity*RESEARCH_CONFIG.max_total_open_risk+1e-7
+               for _,equity,risk in observed)
 
 def test_dynamic_evaluation_window_ignores_future_prices(monkeypatch):
     from crypto_trader.research_portfolio import STRATEGIES
