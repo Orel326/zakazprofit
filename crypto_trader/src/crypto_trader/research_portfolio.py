@@ -27,8 +27,45 @@ def _rank(signal):
     # Equal ratios tie, then alphabetical symbol; no future prices involved.
     return (signal.take_profit - signal.reference_price) / signal.reference_price
 
+
+def _momentum(rows, i, lookback=30):
+    if i < lookback:
+        return None
+    return float(rows[i][4])/float(rows[i-lookback][4])-1.
+
+def _correlation(a, b, i, lookback=30):
+    if i < lookback:
+        return 1.
+    x = [float(a[k][4])/float(a[k-1][4])-1 for k in range(i-lookback+1,i+1)]
+    y = [float(b[k][4])/float(b[k-1][4])-1 for k in range(i-lookback+1,i+1)]
+    mx, my = sum(x)/len(x),sum(y)/len(y)
+    xx = sum((v-mx)**2 for v in x)
+    yy = sum((v-my)**2 for v in y)
+    if xx*yy <= 1e-20:
+        return 1.
+    return sum((u-mx)*(v-my) for u,v in zip(x,y))/(xx*yy)**0.5
+
+def _eligible_universe(data, i, selection_size, correlation_limit):
+    # Select using only current/past CLOSED candle prices.
+    scores = []
+    for symbol, rows in data.items():
+        momentum = _momentum(rows,i)
+        if momentum is not None and momentum > 0:
+            scores.append((-momentum,symbol))
+    selected = []
+    for _,symbol in sorted(scores):
+        if all(_correlation(data[symbol],data[other],i) < correlation_limit
+               for other in selected):
+            selected.append(symbol)
+            if len(selected) >= selection_size:
+                break
+    return frozenset(selected)
+
 def portfolio_backtest(data, timeframe_ms, *, strategy="ema_adx",
-                       config=RESEARCH_CONFIG, start_index=0, end_index=None):
+                       config=RESEARCH_CONFIG, start_index=0, end_index=None,
+                       selection_size=None, correlation_limit=0.85):
+    if selection_size is not None and (not isinstance(selection_size,int) or selection_size < 1 or not -1 < correlation_limit < 1):
+        raise ValueError("invalid dynamic selection settings")
     if strategy not in STRATEGIES or not data or len(data) > len(UNIVERSE):
         raise ValueError("invalid strategy or portfolio")
     if any(s not in UNIVERSE for s in data):
@@ -100,6 +137,7 @@ def portfolio_backtest(data, timeframe_ms, *, strategy="ema_adx",
             dd = max(dd,(peak-value)/peak)
         return {
             "symbols": list(symbols), "strategy": strategy,
+            "selection_size": selection_size, "correlation_limit": correlation_limit,
             "return_pct": 100*(equity_curve[-1]/config.initial_balance-1),
             "ending_equity": equity_curve[-1],
             "max_drawdown_pct": 100*dd,
