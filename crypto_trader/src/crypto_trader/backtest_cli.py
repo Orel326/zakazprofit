@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+from dataclasses import asdict
 from datetime import datetime, timezone
 
 from . import team
@@ -69,7 +72,7 @@ def main() -> int:
         description="Historical paper backtest; compares simple and Wilder RSI; no real orders."
     )
     parser.add_argument("--timeframe", default=settings.default_timeframe, choices=tuple(TIMEFRAME_MS))
-    parser.add_argument("--days", type=int, default=180)
+    parser.add_argument("--days", type=int, default=365)
     parser.add_argument("--candles", type=int, default=0, help="optional maximum candle count")
     parser.add_argument("--walk-forward-folds", type=int, default=4)
     args = parser.parse_args()
@@ -81,10 +84,16 @@ def main() -> int:
     try:
         exchange.load_markets()
         output = {}
+        dataset_fingerprints = {}
         for symbol in settings.symbols:
             candles = fetch_closed_ohlcv(exchange, symbol, args.timeframe, since, now)
             if args.candles:
                 candles = candles[-args.candles:]
+            canonical_data = json.dumps(
+                [[int(row[0]), *[float(value) for value in row[1:6]]] for row in candles],
+                separators=(",", ":"), allow_nan=False,
+            ).encode("utf-8")
+            dataset_fingerprints[symbol] = hashlib.sha256(canonical_data).hexdigest()
             try:
                 config = PaperConfig()
                 simple = _run_rsi_variant(
@@ -95,6 +104,8 @@ def main() -> int:
                     symbol, candles, TIMEFRAME_MS[args.timeframe], config,
                     args.walk_forward_folds, "wilder",
                 )
+                simple["data"]["sha256"] = dataset_fingerprints[symbol]
+                wilder["data"]["sha256"] = dataset_fingerprints[symbol]
                 output[symbol] = {
                     "simple_rsi": simple,
                     "wilder_rsi": wilder,
@@ -105,6 +116,24 @@ def main() -> int:
                     "status": "rejected", "reason": str(exc),
                     "candles_received": len(candles),
                 }
+        output["_metadata"] = {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "exchange_id": settings.exchange_id,
+            "timeframe": args.timeframe,
+            "requested_days": args.days,
+            "requested_since_ms": since,
+            "requested_until_ms": now,
+            "walk_forward_folds": args.walk_forward_folds,
+            "strategy_version": "ema20_ema50_rsi_atr_long_spot_v1",
+            "git_commit": os.getenv("GITHUB_SHA"),
+            "execution_and_risk_config": asdict(PaperConfig()),
+            "dataset_sha256": dataset_fingerprints,
+            "notes": [
+                "Public OHLCV only; no real orders.",
+                "Dataset hash is SHA-256 of canonical timestamp/OHLCV rows per symbol.",
+                "Walk-forward folds use fresh paper accounts and historical indicator warm-up only.",
+            ],
+        }
         print(json.dumps(output, ensure_ascii=False, indent=2, allow_nan=False))
     finally:
         exchange.close()
