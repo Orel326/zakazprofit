@@ -211,7 +211,7 @@ def test_dynamic_selection_can_choose_uncorrelated_new_symbol_with_holding():
     for i,row in enumerate(data["ETH/USDT"]):
         price=100+i*.1+(2 if i%2 else -2)
         row[1:5]=[price,price+1,price-1,price]
-    selected=_eligible_universe(data,230,1,0.85,held={"BTC/USDT"})
+    selected=_eligible_universe(data,230,2,0.85,held={"BTC/USDT"})
     assert selected==frozenset({"ETH/USDT"})
 
 
