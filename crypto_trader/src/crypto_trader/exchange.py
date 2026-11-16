@@ -29,9 +29,10 @@ def create_exchange(exchange_id: str = "okx"):
 
 
 def fetch_closed_ohlcv(
-    exchange, symbol: str, timeframe: str, since_ms: int, now_ms: int | None = None
+    exchange, symbol: str, timeframe: str, since_ms: int, now_ms: int | None = None,
+    allowed_symbols: frozenset[str] | None = None,
 ):
-    if symbol not in ALLOWED_SYMBOLS:
+    if symbol not in (ALLOWED_SYMBOLS if allowed_symbols is None else allowed_symbols):
         raise ValueError(f"Unsupported symbol: {symbol}")
     if timeframe not in TIMEFRAME_MS:
         raise ValueError(f"Unsupported timeframe: {timeframe}")
