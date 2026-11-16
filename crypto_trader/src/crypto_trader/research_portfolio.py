@@ -91,6 +91,9 @@ def portfolio_backtest(data, timeframe_ms, *, strategy="ema_adx",
             stamp = datetime.fromtimestamp(
                 (int(data[symbols[0]][i][0])+timeframe_ms)/1000, timezone.utc
             ).isoformat()
+            open_stamp = datetime.fromtimestamp(
+                int(data[symbols[0]][i][0])/1000, timezone.utc
+            ).isoformat()
             # Execute only signals decided at the PREVIOUS candle close.
             # Gap-up entries that invalidate the original stop/target are skipped.
             for symbol, signal in pending:
@@ -99,7 +102,7 @@ def portfolio_backtest(data, timeframe_ms, *, strategy="ema_adx",
                     continue
                 try:
                     broker.open_position(symbol, entry_open,
-                                         signal.stop_loss, signal.take_profit, stamp)
+                                         signal.stop_loss, signal.take_profit, open_stamp)
                 except ValueError:
                     continue
             pending = []
