@@ -49,9 +49,23 @@ def main():
     if all(s in data for s in UNIVERSE):
         for count in (3,5):
             try:
-                dynamic[str(count)] = portfolio_backtest(
-                    {s:data[s] for s in UNIVERSE}, TIMEFRAME_MS[args.timeframe],
-                    selection_size=count)
+                subset = {s:data[s] for s in UNIVERSE}
+                full = portfolio_backtest(subset, TIMEFRAME_MS[args.timeframe],
+                                          selection_size=count)
+                length = len(next(iter(subset.values())))
+                warmup = 220
+                folds = []
+                for j in range(args.folds):
+                    left = warmup+(length-warmup)*j//args.folds
+                    right = warmup+(length-warmup)*(j+1)//args.folds
+                    folds.append(portfolio_backtest(
+                        subset,TIMEFRAME_MS[args.timeframe],selection_size=count,
+                        start_index=left,end_index=right))
+                dynamic[str(count)] = {
+                    "full_period":full,"folds":folds,
+                    "profitable_folds":sum(f["return_pct"]>0 for f in folds),
+                    "method":"fixed parameters, non-overlapping chronological evaluation folds; no optimization"
+                }
             except ValueError as exc:
                 dynamic[str(count)] = {"status":"rejected","reason":str(exc)}
     else:
