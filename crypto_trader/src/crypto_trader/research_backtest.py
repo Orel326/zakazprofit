@@ -1,7 +1,7 @@
 """Research-only chronological simulator using the existing virtual spot broker.
 
 No exchange orders. Signals only see candles through the current close.
-Entries fill at that close (plus slippage); exits start with the NEXT candle.
+Entries fill at the NEXT candle open (plus slippage); intrabar stops are checked immediately.
 """
 from __future__ import annotations
 
@@ -29,29 +29,29 @@ def simulate(symbol, rows, timeframe_ms, strategy, config=None, *, start_index=0
     with tempfile.TemporaryDirectory(prefix="crypto-research-") as directory:
         broker = PaperBroker(Path(directory) / "paper.sqlite3", cfg)
         curve = []
+        pending = None  # Signal from previous CLOSED candle only.
         for i in range(start_index, end):
             candle = rows[i]
             stamp = datetime.fromtimestamp((int(candle[0]) + timeframe_ms)/1000, timezone.utc).isoformat()
-            position = next((p for p in broker.open_positions() if p["symbol"] == symbol), None)
-            if position:
-                opened = datetime.fromisoformat(position["opened_at"]).timestamp() * 1000
-                if int(candle[0]) + timeframe_ms > opened:
-                    broker.process_candle(symbol, stamp, float(candle[2]), float(candle[3]),
-                                          open_price=float(candle[1]))
-            elif i + 1 >= WARMUP[strategy]:
-                signal = STRATEGIES[strategy](rows[:i+1])
-                if signal is not None:
+            open_stamp = datetime.fromtimestamp(int(candle[0])/1000, timezone.utc).isoformat()
+            if pending is not None:
+                open_price = float(candle[1])
+                if pending.stop_loss < open_price < pending.take_profit:
                     try:
-                        broker.open_position(symbol, signal.reference_price,
-                                             signal.stop_loss, signal.take_profit, stamp)
+                        broker.open_position(symbol, open_price, pending.stop_loss,
+                                             pending.take_profit, open_stamp)
                     except ValueError:
                         pass
+                pending = None
+            # Stop/target can be touched on the very candle of entry.
             if broker.open_positions():
-                equity = broker.record_equity({symbol: float(candle[4])}, stamp)["equity"]
-            else:
-                equity = broker.account()["cash"]
-                # Update daily guard even on flat candles.
-                broker.record_equity({}, stamp)
+                broker.process_candle(symbol, stamp, float(candle[2]), float(candle[3]),
+                                      open_price=float(candle[1]))
+            # Do not enter at the close used to calculate the signal.
+            if not broker.open_positions() and i + 1 >= WARMUP[strategy] and i + 1 < end:
+                pending = STRATEGIES[strategy](rows[:i+1])
+            marks = {symbol:float(candle[4])} if broker.open_positions() else {}
+            equity = broker.record_equity(marks, stamp)["equity"]
             curve.append(equity)
         last = rows[end-1]
         stamp = datetime.fromtimestamp((int(last[0])+timeframe_ms)/1000, timezone.utc).isoformat()
@@ -72,6 +72,7 @@ def simulate(symbol, rows, timeframe_ms, strategy, config=None, *, start_index=0
         benchmark = qty * last_price*(1-cfg.slippage_rate)*(1-cfg.fee_rate)
         return {
             "strategy": strategy, "symbol": symbol,
+            "execution_model": "signal at close; next-open entry; same-candle stop priority",
             "return_pct": (curve[-1]/cfg.initial_balance-1)*100,
             "net_pnl": curve[-1]-cfg.initial_balance,
             "ending_equity": curve[-1],
