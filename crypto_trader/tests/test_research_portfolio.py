@@ -235,3 +235,38 @@ def test_dynamic_selection_at_capacity_does_not_add_assets(monkeypatch):
                                  held=set(UNIVERSE[:3])) == frozenset()
     assert rp._eligible_universe(data, 230, 3, 0.85,
                                  held=set(UNIVERSE[:4])) == frozenset()
+
+
+def test_dynamic_portfolio_never_exceeds_requested_holdings(monkeypatch):
+    from crypto_trader import research_portfolio as rp
+    from crypto_trader.research_strategies import Signal
+    data = dataset(UNIVERSE[:5], count=240)
+    # Independent momentum series permit several eligible candidates.
+    for j, rows in enumerate(data.values()):
+        for i, row in enumerate(rows):
+            price = 100 + i * (0.1 + j * 0.02) + (j + 1) * (i % (j + 2)) * 0.01
+            row[1:5] = [price, price + 1, price - 1, price]
+    monkeypatch.setattr(rp, "_correlation", lambda *args, **kwargs: 0.0)
+    monkeypatch.setitem(rp.STRATEGIES, "ema_adx", lambda rows: Signal(
+        "ema_adx", float(rows[-1][4]), float(rows[-1][4]) * .5,
+        float(rows[-1][4]) * 1.5))
+    counts = []
+    original = rp.PaperBroker.open_position
+    def observed(self, *args, **kwargs):
+        result = original(self, *args, **kwargs)
+        counts.append(len(self.open_positions()))
+        return result
+    monkeypatch.setattr(rp.PaperBroker, "open_position", observed)
+    report = rp.portfolio_backtest(data, HOUR, selection_size=3)
+    assert report["closed_trades"] > 0
+    assert counts and max(counts) <= 3
+
+
+def test_dynamic_selection_ignores_future_ohlc_not_just_close():
+    from crypto_trader.research_portfolio import _eligible_universe
+    data = dataset(UNIVERSE[:5], count=250)
+    before = _eligible_universe(data, 230, 3, 0.85)
+    for rows in data.values():
+        for i in range(231, 250):
+            rows[i][1:5] = [500., 600., 400., 550.]
+    assert _eligible_universe(data, 230, 3, 0.85) == before
