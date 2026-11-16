@@ -92,3 +92,22 @@ def test_portfolio_fold_does_not_depend_on_future_data():
     second=portfolio_backtest(data,HOUR,start_index=220,end_index=240)
     assert first["ending_equity"]==second["ending_equity"]
     assert first["closed_trades"]==second["closed_trades"]
+
+def test_dynamic_filter_changes_actual_executions(monkeypatch):
+    from crypto_trader.research_portfolio import STRATEGIES
+    from crypto_trader.research_strategies import Signal
+    data = dataset(count=240)
+    # ETH trends downward while BTC trends upward; no future observations.
+    for i, row in enumerate(data["ETH/USDT"]):
+        price = 100-i*.1
+        row[1],row[2],row[3],row[4] = price,price+1,price-1,price
+    def always_signal(rows):
+        price = float(rows[-1][4])
+        return Signal("ema_adx",price,price*.5,price*1.5)
+    monkeypatch.setitem(STRATEGIES,"ema_adx",always_signal)
+    fixed = portfolio_backtest(data,HOUR)
+    dynamic = portfolio_backtest(data,HOUR,selection_size=1)
+    assert fixed["trades_by_symbol"]["ETH/USDT"] > 0
+    assert dynamic["trades_by_symbol"]["ETH/USDT"] == 0
+    assert dynamic["trades_by_symbol"]["BTC/USDT"] > 0
+    assert dynamic["closed_trades"] < fixed["closed_trades"]
