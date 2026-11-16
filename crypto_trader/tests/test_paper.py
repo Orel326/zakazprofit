@@ -156,7 +156,7 @@ def test_daily_loss_limit_blocks_new_entries_on_marked_equity_drawdown(tmp_path)
     paper.open_position("BTC/USDT", 100, 95, 110,
                         "2026-11-01T10:00:00+00:00")
     # Mark-to-market equity includes the open position's unrealized loss.
-    paper.record_equity({"BTC/USDT": 90.0},
+    paper.record_equity({"BTC/USDT": 70.0},
                         "2026-11-01T11:00:00+00:00")
     with pytest.raises(ValueError, match="daily loss limit reached"):
         paper.open_position("ETH/USDT", 100, 95, 110,
@@ -172,3 +172,29 @@ def test_daily_loss_limit_uses_utc_day_across_timezone_offsets(tmp_path):
     paper.record_equity({"BTC/USDT": 100.0},
                         "2026-11-02T02:00:00+00:00")
     assert paper.open_positions()
+
+
+
+def test_realized_daily_loss_blocks_entries_after_position_is_closed(tmp_path):
+    paper = broker(tmp_path, daily_loss_limit=0.02)
+    paper.open_position("BTC/USDT", 100, 95, 110,
+                        "2026-11-01T10:00:00+00:00")
+    paper.close_position("BTC/USDT", 70, "manual",
+                         "2026-11-01T11:00:00+00:00")
+    with pytest.raises(ValueError, match="daily loss limit reached"):
+        paper.open_position("ETH/USDT", 100, 95, 110,
+                            "2026-11-01T12:00:00+00:00")
+
+
+def test_daily_risk_guard_resets_on_next_utc_day(tmp_path):
+    paper = broker(tmp_path, daily_loss_limit=0.02)
+    paper.open_position("BTC/USDT", 100, 95, 110,
+                        "2026-11-01T10:00:00+00:00")
+    paper.record_equity({"BTC/USDT": 70.0},
+                        "2026-11-01T11:00:00+00:00")
+    # Existing exposure remains, but a new UTC day starts a fresh daily limit.
+    paper.record_equity({"BTC/USDT": 100.0},
+                        "2026-11-02T00:00:00+00:00")
+    opened = paper.open_position("ETH/USDT", 100, 95, 110,
+                                 "2026-11-02T01:00:00+00:00")
+    assert opened["symbol"] == "ETH/USDT"
