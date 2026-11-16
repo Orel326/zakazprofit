@@ -44,17 +44,21 @@ def _correlation(a, b, i, lookback=30):
         return 1.
     return sum((u-mx)*(v-my) for u,v in zip(x,y))/(xx*yy)**0.5
 
-def _eligible_universe(data, i, selection_size, correlation_limit):
+def _eligible_universe(data, i, selection_size, correlation_limit, held=()):
     # Select using only current/past CLOSED candle prices.
     scores = []
     for symbol, rows in data.items():
         momentum = _momentum(rows,i)
         if momentum is not None and momentum > 0:
             scores.append((-momentum,symbol))
+    # Existing positions consume diversification capacity even if they are no
+    # longer in the top momentum list. Never stack correlated new entries.
     selected = []
     for _,symbol in sorted(scores):
+        if symbol in held:
+            continue
         if all(_correlation(data[symbol],data[other],i) < correlation_limit
-               for other in selected):
+               for other in (*selected, *sorted(held))):
             selected.append(symbol)
             if len(selected) >= selection_size:
                 break
@@ -118,7 +122,7 @@ def portfolio_backtest(data, timeframe_ms, *, strategy="ema_adx",
             if i+1 >= WARMUP[strategy] and i+1 < end:
                 held = {p["symbol"] for p in broker.open_positions()}
                 eligible = (frozenset(symbols) if selection_size is None
-                            else _eligible_universe(data, i, selection_size, correlation_limit))
+                            else _eligible_universe(data, i, selection_size, correlation_limit, held))
                 candidates = []
                 for symbol in symbols:
                     if symbol not in eligible or symbol in held:
