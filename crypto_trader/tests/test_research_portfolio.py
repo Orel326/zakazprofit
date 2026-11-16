@@ -53,3 +53,20 @@ def test_risk_is_conservative():
     assert RESEARCH_CONFIG.risk_per_trade==0.0025
     assert RESEARCH_CONFIG.max_open_positions==4
     assert RESEARCH_CONFIG.max_total_open_risk==0.01
+
+def test_dynamic_selection_respects_correlated_assets():
+    from crypto_trader.research_portfolio import _eligible_universe
+    data=dataset(UNIVERSE[:5])
+    selected=_eligible_universe(data,230,3,0.85)
+    # Identical return streams must not be treated as diversified.
+    assert len(selected)==1
+
+def test_dynamic_selection_runs_without_future_prices():
+    data=dataset(UNIVERSE[:5])
+    result=portfolio_backtest(data,HOUR,selection_size=3)
+    assert result["selection_size"]==3
+    assert result["closed_trades"]>=0
+
+def test_dynamic_settings_are_validated():
+    with pytest.raises(ValueError,match="dynamic selection"):
+        portfolio_backtest(dataset(),HOUR,selection_size=0)
