@@ -135,6 +135,7 @@ def test_next_open_entry_and_same_candle_stop_are_conservative(monkeypatch):
     report=portfolio_backtest(data,HOUR)
     assert len(called)==1
     assert called[0][1]==95.  # next open, NOT signal close 100
+    assert called[0][2].startswith("1970-01-10T05:00:00")  # index 221 candle open
     assert report["closed_trades"]==1
     assert report["return_pct"]<0
 
