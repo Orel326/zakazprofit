@@ -33,7 +33,7 @@ def main():
             "risk_and_costs": asdict(PaperConfig()),
             "strategies": list(STRATEGIES),
             "method": "Fixed parameters, no optimization. Disjoint test folds with historical warmup; not optimized walk-forward.",
-            "caution": "Paper simulation; candle-close entry, next-candle stop/target; no intrabar trailing stop or real orders.",
+            "caution": "Paper simulation; signals on closed candles, next-open entry, same-candle stop/target with adverse stop priority; no real orders. Historical periods are exploratory, not untouched out-of-sample.",
         }
     }
     try:
