@@ -195,3 +195,21 @@ def test_dynamic_evaluation_window_ignores_future_prices(monkeypatch):
     second=portfolio_backtest(data,HOUR,selection_size=3,
                               start_index=220,end_index=240)
     assert first==second
+
+def test_dynamic_selection_excludes_correlated_existing_holdings():
+    from crypto_trader.research_portfolio import _eligible_universe
+    data=dataset(UNIVERSE[:5],count=250)
+    # Every symbol has the same return stream. A position already held in
+    # BTC must prevent stacking another highly correlated symbol.
+    selected=_eligible_universe(data,230,3,0.85,held={"BTC/USDT"})
+    assert selected==frozenset()
+
+def test_dynamic_selection_can_choose_uncorrelated_new_symbol_with_holding():
+    from crypto_trader.research_portfolio import _eligible_universe
+    data=dataset(UNIVERSE[:2],count=250)
+    # ETH has a positive but different alternating return pattern.
+    for i,row in enumerate(data["ETH/USDT"]):
+        price=100+i*.1+(2 if i%2 else -2)
+        row[1:5]=[price,price+1,price-1,price]
+    selected=_eligible_universe(data,230,1,0.85,held={"BTC/USDT"})
+    assert selected==frozenset({"ETH/USDT"})
