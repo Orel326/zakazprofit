@@ -104,6 +104,24 @@ def main():
             }
         except ValueError as exc:
             diagnostics[label] = {"status":"rejected","reason":str(exc)}
+    # Predefined alternative already implemented in research_strategies.py.
+    # Exploratory comparison on the SAME historical sample, not a holdout.
+    # No parameters are tuned using the observed outcomes.
+    alternative = {}
+    for label, selected, kwargs in (
+        ("fixed_2", UNIVERSE[:2], {}),
+        ("dynamic_5", UNIVERSE, {"selection_size": 5}),
+    ):
+        if not all(s in data for s in selected):
+            alternative[label] = {"status": "rejected", "reason": "missing requested symbols"}
+            continue
+        subset = {s: data[s] for s in selected}
+        try:
+            alternative[label] = portfolio_backtest(
+                subset, TIMEFRAME_MS[args.timeframe], strategy="donchian_atr", **kwargs
+            )
+        except ValueError as exc:
+            alternative[label] = {"status": "rejected", "reason": str(exc)}
     print(json.dumps({
         "_metadata":{
             "created_at_utc":datetime.now(timezone.utc).isoformat(),
@@ -117,6 +135,7 @@ def main():
         "rejected_symbols":rejected,"portfolios":comparisons,
         "dynamic_top_3_5":dynamic,
         "chronological_evaluation_and_cost_stress":diagnostics,
+        "exploratory_donchian_atr":alternative,
     },ensure_ascii=False,indent=2,allow_nan=False))
     return 0
 
