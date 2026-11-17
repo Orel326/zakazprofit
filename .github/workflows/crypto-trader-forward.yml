@@ -1,0 +1,41 @@
+name: Crypto trader forward paper observation
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  forward:
+    if: github.ref == 'refs/heads/crypto-trader-strategy-research'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: crypto_trader
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: crypto-trader-strategy-research
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: crypto_trader/pyproject.toml
+      - name: Install and verify forward evaluation
+        run: |
+          python -m pip install ".[dev]"
+          python -m pytest -q tests/test_research_forward.py
+      - name: Collect public closed candles; no orders or secrets
+        run: python -m crypto_trader.research_portfolio_cli --forward-only --days 365 --timeframe 4h > forward-paper-report.json
+      - name: Upload immutable run artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crypto-forward-paper-report
+          path: crypto_trader/forward-paper-report.json
+          retention-days: 90
+          if-no-files-found: warn
