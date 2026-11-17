@@ -103,6 +103,15 @@ def portfolio_backtest(data, timeframe_ms, *, strategy="ema_adx",
             open_stamp = datetime.fromtimestamp(
                 int(data[symbols[0]][i][0])/1000, timezone.utc
             ).isoformat()
+            # Existing positions can gap through their stop/target at this open.
+            # Settle those exits before sizing new entries against shared cash,
+            # risk capacity and the daily loss guard. This uses only the open,
+            # not the current candle's future high/low.
+            for p in broker.open_positions():
+                opening_price = float(data[p["symbol"]][i][1])
+                broker.process_candle(p["symbol"], open_stamp,
+                                      opening_price, opening_price,
+                                      open_price=opening_price)
             # Execute only signals decided at the PREVIOUS candle close.
             # Gap-up entries that invalidate the original stop/target are skipped.
             for symbol, signal in pending:
