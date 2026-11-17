@@ -32,7 +32,7 @@ jobs:
       - name: Install and test
         run: |
           python -m pip install ".[dev]"
-          python -m pytest -q tests/test_research_strategies.py tests/test_research_backtest.py tests/test_research_portfolio.py
+          python -m pytest -q tests/test_research_strategies.py tests/test_research_backtest.py tests/test_research_portfolio.py tests/test_research_forward.py
       - name: Research BTC and ETH on public 365-day candles
         run: python -m crypto_trader.research_cli --days 365 --timeframe 1h --folds 4 > strategy-research-report.json
       - name: Research 2/5/10 coin portfolios on 4h candles
