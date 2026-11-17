@@ -270,3 +270,38 @@ def test_dynamic_selection_ignores_future_ohlc_not_just_close():
         for i in range(231, 250):
             rows[i][1:5] = [500., 600., 400., 550.]
     assert _eligible_universe(data, 230, 3, 0.85) == before
+
+
+def test_opening_gap_exit_precedes_new_entries(monkeypatch):
+    from crypto_trader import research_portfolio as rp
+    from crypto_trader.research_strategies import Signal
+    data = dataset(UNIVERSE[:2], count=225)
+    for row in data["ETH/USDT"]:
+        row[1:5] = [200., 201., 199., 200.]
+    # BTC enters at index 220 and gaps through its stop at index 221,
+    # when ETH has a pending order from the previous close.
+    data["BTC/USDT"][221][1:5] = [80., 82., 79., 81.]
+    def signal(rows):
+        price = float(rows[-1][4])
+        if len(rows) == 220 and price < 150:
+            return Signal("ema_adx", price, 90., 150.)
+        if len(rows) == 221 and price > 150:
+            return Signal("ema_adx", price, 180., 240.)
+        return None
+    monkeypatch.setitem(rp.STRATEGIES, "ema_adx", signal)
+    events = []
+    original_open = rp.PaperBroker.open_position
+    original_close = rp.PaperBroker.close_position
+    def tracked_open(self, symbol, *args, **kwargs):
+        events.append(("open", symbol))
+        return original_open(self, symbol, *args, **kwargs)
+    def tracked_close(self, symbol, *args, **kwargs):
+        events.append(("close", symbol))
+        return original_close(self, symbol, *args, **kwargs)
+    monkeypatch.setattr(rp.PaperBroker, "open_position", tracked_open)
+    monkeypatch.setattr(rp.PaperBroker, "close_position", tracked_close)
+    rp.portfolio_backtest(data, HOUR)
+    assert ("open", "BTC/USDT") in events
+    assert ("close", "BTC/USDT") in events
+    assert ("open", "ETH/USDT") in events
+    assert events.index(("close", "BTC/USDT")) < events.index(("open", "ETH/USDT"))
