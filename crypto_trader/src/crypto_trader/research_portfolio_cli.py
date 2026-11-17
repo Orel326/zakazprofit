@@ -17,6 +17,7 @@ def main():
     parser.add_argument("--days",type=int,default=365)
     parser.add_argument("--timeframe",choices=("1h","4h"),default="1h")
     parser.add_argument("--folds",type=int,default=4)
+    parser.add_argument("--forward-only",action="store_true",help="Collect forward observation status without rerunning historical comparisons")
     args = parser.parse_args()
     if args.days<1 or args.folds<2:
         parser.error("days >= 1 and folds >= 2 required")
@@ -42,6 +43,18 @@ def main():
                 rejected[symbol] = f"{type(exc).__name__}: {exc}"
     finally:
         exchange.close()
+    if args.forward_only:
+        print(json.dumps({
+            "_metadata": {"created_at_utc": datetime.now(timezone.utc).isoformat(),
+                          "git_commit": os.getenv("GITHUB_SHA"),
+                          "exchange": settings.exchange_id, "timeframe": args.timeframe,
+                          "requested_days": args.days, "dataset_sha256": hashes,
+                          "mode": "forward_only", "risk": asdict(RESEARCH_CONFIG)},
+            "candles_by_symbol": {s: len(rows) for s, rows in data.items()},
+            "rejected_symbols": rejected,
+            "precommitted_forward_validation": evaluate_forward(data, TIMEFRAME_MS[args.timeframe]),
+        }, ensure_ascii=False, indent=2, allow_nan=False))
+        return 0
     # Reject missing/unequal histories explicitly rather than silently forward-filling.
     try:
         comparisons = compare_portfolios(data,TIMEFRAME_MS[args.timeframe],folds=args.folds)
