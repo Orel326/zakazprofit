@@ -305,3 +305,25 @@ def test_opening_gap_exit_precedes_new_entries(monkeypatch):
     assert ("close", "BTC/USDT") in events
     assert ("open", "ETH/USDT") in events
     assert events.index(("close", "BTC/USDT")) < events.index(("open", "ETH/USDT"))
+
+
+def test_historical_fold_ignores_invalid_future_candles_and_timestamps():
+    data = dataset(UNIVERSE[:2], count=260)
+    baseline = portfolio_backtest(data, HOUR, start_index=220, end_index=240,
+                                  selection_size=1)
+    # These rows occur strictly after the evaluated fold; neither malformed
+    # prices nor desynchronization can change its validity or result.
+    data["BTC/USDT"][250][3] = -1.
+    data["ETH/USDT"][251][0] += 17
+    assert portfolio_backtest(data, HOUR, start_index=220, end_index=240,
+                              selection_size=1) == baseline
+    # A full-period run must still reject the same invalid input.
+    with pytest.raises(ValueError, match="invalid/gapped candles"):
+        portfolio_backtest(data, HOUR, selection_size=1)
+
+
+def test_historical_fold_rejects_invalid_candles_inside_window():
+    data = dataset(UNIVERSE[:2], count=260)
+    data["BTC/USDT"][230][3] = -1.
+    with pytest.raises(ValueError, match="invalid/gapped candles"):
+        portfolio_backtest(data, HOUR, start_index=220, end_index=240)
