@@ -123,40 +123,6 @@ def main():
             )
         except ValueError as exc:
             alternative[label] = {"status": "rejected", "reason": str(exc)}
-    # Forward evaluation protocol frozen before the first eligible candle.
-    # This is a fresh, non-optimized evaluation window, NOT a claim of
-    # statistical significance. No results are produced until data exists.
-    forward_cutoff_ms = int(datetime(2026, 11, 19, tzinfo=timezone.utc).timestamp() * 1000)
-    forward = {
-        "cutoff_utc": "2026-11-19T00:00:00+00:00",
-        "status": "pending",
-        "note": "Frozen EMA/ADX parameters; fresh candles only; no optimization or real orders.",
-        "portfolios": {},
-    }
-    for label, selected, kwargs in (
-        ("fixed_2", UNIVERSE[:2], {}),
-        ("fixed_5", UNIVERSE[:5], {}),
-        ("fixed_10", UNIVERSE, {}),
-        ("dynamic_3", UNIVERSE, {"selection_size": 3}),
-        ("dynamic_5", UNIVERSE, {"selection_size": 5}),
-    ):
-        if not all(s in data for s in selected):
-            forward["portfolios"][label] = {"status": "rejected", "reason": "missing symbols"}
-            continue
-        subset = {s: data[s] for s in selected}
-        rows = next(iter(subset.values()))
-        start = next((i for i, row in enumerate(rows) if int(row[0]) >= forward_cutoff_ms), len(rows))
-        if start < WARMUP["ema_adx"] or len(rows) - start < 2:
-            forward["portfolios"][label] = {"status": "pending", "reason": "insufficient post-cutoff candles or warmup"}
-            continue
-        try:
-            forward["portfolios"][label] = portfolio_backtest(
-                subset, TIMEFRAME_MS[args.timeframe], start_index=start, **kwargs
-            )
-        except ValueError as exc:
-            forward["portfolios"][label] = {"status": "rejected", "reason": str(exc)}
-    if any(v.get("status") not in ("pending", "rejected") for v in forward["portfolios"].values()):
-        forward["status"] = "evaluated"
     print(json.dumps({
         "_metadata":{
             "created_at_utc":datetime.now(timezone.utc).isoformat(),
@@ -171,7 +137,6 @@ def main():
         "dynamic_top_3_5":dynamic,
         "chronological_evaluation_and_cost_stress":diagnostics,
         "exploratory_donchian_atr":alternative,
-        "precommitted_forward_evaluation":forward,
         "precommitted_forward_validation":evaluate_forward(data,TIMEFRAME_MS[args.timeframe]),
     },ensure_ascii=False,indent=2,allow_nan=False))
     return 0
