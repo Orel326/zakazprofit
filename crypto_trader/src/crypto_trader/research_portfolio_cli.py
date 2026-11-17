@@ -10,6 +10,7 @@ from .config import Settings
 from .exchange import TIMEFRAME_MS, create_exchange, fetch_closed_ohlcv
 from .research_portfolio import UNIVERSE, RESEARCH_CONFIG, compare_portfolios, portfolio_backtest
 from .research_backtest import WARMUP
+from .research_forward import evaluate_forward
 
 def main():
     parser = argparse.ArgumentParser(description="Research-only portfolio backtest; no orders")
@@ -136,6 +137,7 @@ def main():
         "dynamic_top_3_5":dynamic,
         "chronological_evaluation_and_cost_stress":diagnostics,
         "exploratory_donchian_atr":alternative,
+        "precommitted_forward_validation":evaluate_forward(data,TIMEFRAME_MS[args.timeframe]),
     },ensure_ascii=False,indent=2,allow_nan=False))
     return 0
 
