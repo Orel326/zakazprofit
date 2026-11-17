@@ -78,19 +78,22 @@ def portfolio_backtest(data, timeframe_ms, *, strategy="ema_adx",
         raise ValueError("invalid strategy or portfolio")
     if any(s not in UNIVERSE for s in data):
         raise ValueError("unsupported research symbol")
-    for symbol, rows in data.items():
-        q = validate_ohlcv(rows, timeframe_ms)
-        if not q.is_valid or q.warnings:
-            raise ValueError(f"{symbol}: invalid/gapped candles: {q.errors + q.warnings}")
-    # Explicitly require a synchronized dataset, avoiding stale price marks.
-    times = [tuple(int(row[0]) for row in rows) for rows in data.values()]
-    if any(t != times[0] for t in times[1:]):
-        raise ValueError("datasets must have identical candle timestamps")
     symbols = tuple(sorted(data))
-    length = len(times[0])
+    length = len(data[symbols[0]])
     end = length if end_index is None else end_index
     if not 0 <= start_index < end <= length or end < WARMUP[strategy]:
         raise ValueError("invalid evaluation window")
+    # A historical fold must be independent of later candles, including
+    # their validity and timestamps. Validate only the observed prefix.
+    for symbol, rows in data.items():
+        if len(rows) < end:
+            raise ValueError(f"{symbol}: insufficient candles for evaluation window")
+        q = validate_ohlcv(rows[:end], timeframe_ms)
+        if not q.is_valid or q.warnings:
+            raise ValueError(f"{symbol}: invalid/gapped candles: {q.errors + q.warnings}")
+    times = [tuple(int(row[0]) for row in data[symbol][:end]) for symbol in symbols]
+    if any(t != times[0] for t in times[1:]):
+        raise ValueError("datasets must have identical candle timestamps")
     with tempfile.TemporaryDirectory(prefix="crypto-portfolio-") as directory:
         broker = PaperBroker(Path(directory)/"paper.sqlite3", config,
                              allowed_symbols=frozenset(symbols))
