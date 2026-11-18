@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from .research_portfolio import UNIVERSE, portfolio_backtest
 from .research_backtest import WARMUP
+from .quality import validate_ohlcv
 
 FORWARD_CUTOFF_UTC = "2026-11-18T00:00:00+00:00"
 MIN_FORWARD_DAYS = 90
@@ -31,6 +32,20 @@ def evaluate_forward(data, timeframe_ms, *, cutoff_utc=FORWARD_CUTOFF_UTC):
             results[label] = {"status": "missing_symbols"}
             continue
         subset = {s: data[s] for s in symbols}
+        # Reject malformed/misaligned histories even during collection.
+        timestamps = []
+        invalid = None
+        for symbol, rows in subset.items():
+            quality = validate_ohlcv(rows, timeframe_ms)
+            if not quality.is_valid or quality.warnings:
+                invalid = f"{symbol}: invalid/gapped candles"
+                break
+            timestamps.append(tuple(int(row[0]) for row in rows))
+        if invalid is None and any(t != timestamps[0] for t in timestamps[1:]):
+            invalid = "misaligned candle timestamps"
+        if invalid:
+            results[label] = {"status": "rejected", "reason": invalid}
+            continue
         first = subset[symbols[0]]
         # No evaluation can use an incomplete candle or a pre-cutoff entry.
         # All market histories must have the same timestamps (validated by
