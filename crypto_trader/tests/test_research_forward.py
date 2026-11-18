@@ -50,3 +50,20 @@ def test_forward_starts_after_cutoff_and_marks_low_trade_count(monkeypatch):
     assert {size for _, size, _ in calls} == {None, 3, 5}
     assert all(x["status"] == "insufficient_trades"
                for x in report["portfolios"].values())
+
+
+def test_forward_rejects_invalid_candles_during_collection():
+    data = candles(250)
+    data["BTC/USDT"][245][3] = -1.
+    report = evaluate_forward(data, HOUR)
+    assert report["portfolios"]["fixed_2"]["status"] == "rejected"
+    assert report["portfolios"]["dynamic_3"]["status"] == "rejected"
+
+
+def test_forward_rejects_misaligned_candles_during_collection():
+    data = candles(250)
+    for row in data["ETH/USDT"]:
+        row[0] += HOUR
+    report = evaluate_forward(data, HOUR)
+    assert report["portfolios"]["fixed_2"]["status"] == "rejected"
+    assert report["portfolios"]["dynamic_5"]["status"] == "rejected"
