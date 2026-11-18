@@ -42,7 +42,7 @@ def test_forward_starts_after_cutoff_and_marks_low_trade_count(monkeypatch):
     calls = []
     def fake_backtest(subset, timeframe_ms, *, start_index, selection_size):
         calls.append((start_index, selection_size, len(subset)))
-        return {"closed_trades": 0}
+        return {"closed_trades": 0, "natural_closed_trades": 0}
     monkeypatch.setattr(research_forward, "portfolio_backtest", fake_backtest)
     report = evaluate_forward(candles(240 + 91 * 24), HOUR)
     assert len(calls) == 5
@@ -67,3 +67,15 @@ def test_forward_rejects_misaligned_candles_during_collection():
     report = evaluate_forward(data, HOUR)
     assert report["portfolios"]["fixed_2"]["status"] == "rejected"
     assert report["portfolios"]["dynamic_5"]["status"] == "rejected"
+
+
+@pytest.mark.parametrize("natural,terminal,expected", [(29, 1, "insufficient_trades"), (30, 1, "sufficient_observation")])
+def test_forward_excludes_terminal_liquidations(monkeypatch, natural, terminal, expected):
+    from crypto_trader import research_forward
+    monkeypatch.setattr(research_forward, "portfolio_backtest", lambda *a, **kw: {
+        "closed_trades": natural + terminal,
+        "natural_closed_trades": natural,
+        "terminal_closed_trades": terminal,
+    })
+    report = evaluate_forward(candles(240 + 91 * 24), HOUR)
+    assert all(x["status"] == expected for x in report["portfolios"].values())
