@@ -64,7 +64,7 @@ def evaluate_forward(data, timeframe_ms, *, cutoff_utc=FORWARD_CUTOFF_UTC):
         report = portfolio_backtest(subset, timeframe_ms, start_index=start,
                                     selection_size=size)
         results[label] = {
-            "status": "sufficient_observation" if report["closed_trades"] >= MIN_CLOSED_TRADES
+            "status": "sufficient_observation" if report["natural_closed_trades"] >= MIN_CLOSED_TRADES
                       else "insufficient_trades",
             "observed_days": round(days, 3),
             "minimum_trades": MIN_CLOSED_TRADES,
