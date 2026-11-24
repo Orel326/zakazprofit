@@ -7,6 +7,8 @@ on:
       - 'crypto_trader/tests/test_replay_history.py'
       - 'crypto_trader/src/crypto_trader/replay_signals.py'
       - 'crypto_trader/tests/test_replay_signals.py'
+      - 'crypto_trader/src/crypto_trader/replay_execution.py'
+      - 'crypto_trader/tests/test_replay_execution.py'
       - '.github/workflows/crypto-replay-history.yml'
   workflow_dispatch:
 permissions:
@@ -27,6 +29,7 @@ jobs:
           python-version: '3.12'
       - run: python -m unittest discover -s crypto_trader/tests -p test_replay_history.py -v
       - run: python -m unittest discover -s crypto_trader/tests -p test_replay_signals.py -v
+      - run: python -m unittest discover -s crypto_trader/tests -p test_replay_execution.py -v
       - run: python -m crypto_trader.replay_history --phase development --output replay-data
       - uses: actions/upload-artifact@v4
         with:
