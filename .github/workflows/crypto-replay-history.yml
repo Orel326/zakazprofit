@@ -1,0 +1,35 @@
+name: Crypto replay history
+on:
+  push:
+    branches: [crypto-trader-strategy-research]
+    paths:
+      - 'crypto_trader/src/crypto_trader/replay_history.py'
+      - 'crypto_trader/tests/test_replay_history.py'
+      - '.github/workflows/crypto-replay-history.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  history:
+    if: github.ref == 'refs/heads/crypto-trader-strategy-research'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: crypto_trader/src
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s crypto_trader/tests -p test_replay_history.py -v
+      - run: python -m crypto_trader.replay_history --phase development --output replay-data
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crypto-replay-development-history
+          path: |
+            replay-data/manifest.json
+            replay-data/*.json
+          if-no-files-found: error
+          retention-days: 30
